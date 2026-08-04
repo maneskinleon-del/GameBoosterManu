@@ -23,7 +23,6 @@
 - **Panel flotante** con métricas en tiempo real (CPU, RAM, FPS, temperatura)
 - **Watchdog anti-LMK** — el servicio se reinicia automáticamente si Android lo mata
 - **Control de:** governor CPU, refresh rate, DPI, velocidad del puntero, animaciones
-- **Gemini AI** — análisis inteligente de rendimiento (opcional)
 
 ## 📱 Requisitos
 
@@ -31,7 +30,7 @@
 |-----------|---------|
 | Android | 7.0+ (API 24) |
 | Shizuku | Instalado y activo |
-| Opcional | Gemini API key (para análisis AI) |
+
 
 ## 📲 Descargar APK
 
@@ -51,10 +50,7 @@ cd GameBoosterManu
 
 2. Abre en Android Studio
 
-3. Crea `.env` con tu API key:
-```
-GEMINI_API_KEY=tu_api_key_aqui
-```
+3. Build & Run
 
 4. En `app/build.gradle.kts`, elimina:
 ```kotlin
