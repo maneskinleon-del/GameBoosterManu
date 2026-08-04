@@ -202,11 +202,9 @@ class FloatingPanelManager(private val appContext: Context) {
         val glowView = view.findViewById<View>(R.id.glowEffect)
         glowView?.apply {
             visibility = View.VISIBLE
-            animate().alpha(0.6f).scaleX(1.1f).scaleY(1.1f).setDuration(800).withEndAction {
-                animate().alpha(0.2f).scaleX(0.9f).scaleY(0.9f).setDuration(800).withEndAction { 
-                    if (isVisible && currentProfile == ProfileManager.ProfileType.EXTREME) startGlowEffect(view) 
-                }.start()
-            }.start()
+            alpha = 0.4f
+            scaleX = 1.0f
+            scaleY = 1.0f
         }
     }
     
