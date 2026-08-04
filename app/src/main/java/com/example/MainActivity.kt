@@ -806,43 +806,143 @@ fun ConfigRow(label: String, value: String, icon: String) {
     }
 }
 
+// Color naranja para perfil activo (gaming/performance)
+private val ActiveProfileOrange = Color(0xFFFF9100)
+
 @Composable
 fun ProfileCardCompact(profile: ProfileEntity, onClick: () -> Unit) {
+    val isActive = profile.isActive
+    val activeColor = ActiveProfileOrange
+    
+    // Animación para el brillo del perfil activo
+    val infiniteTransition = rememberInfiniteTransition(label = "activePulse")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.15f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+    
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = if (profile.isActive) Color(0xFF171F33) else Color(0xFF111827)),
-        border = BorderStroke(1.dp, if (profile.isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.05f)),
-        shape = RoundedCornerShape(12.dp)
+        colors = CardDefaults.cardColors(
+            containerColor = if (isActive) Color(0xFF1A2744) else Color(0xFF111827)
+        ),
+        border = BorderStroke(
+            width = if (isActive) 2.dp else 1.dp,
+            color = if (isActive) activeColor.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.05f)
+        ),
+        shape = RoundedCornerShape(14.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Box(modifier = Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.05f)), contentAlignment = Alignment.Center) {
-                    Text(profile.icon, fontSize = 20.sp)
+                // Icono del perfil con fondo destacado si está activo
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (isActive) activeColor.copy(alpha = glowAlpha)
+                            else Color.White.copy(alpha = 0.05f)
+                        )
+                        .then(
+                            if (isActive) Modifier.border(1.5.dp, activeColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                            else Modifier
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(profile.icon, fontSize = 24.sp)
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                
+                Spacer(modifier = Modifier.width(14.dp))
+                
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(profile.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(profile.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        profile.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = if (isActive) activeColor else Color.White
+                    )
+                    Text(
+                        profile.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
-                if (profile.isActive) {
-                    Box(modifier = Modifier.width(40.dp).height(20.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)).border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape))
+                
+                // Badge "ACTIVO" con animación
+                if (isActive) {
+                    Surface(
+                        color = activeColor.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, activeColor.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(activeColor)
+                            )
+                            Text(
+                                "ACTIVO",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = activeColor,
+                                fontSize = 9.sp,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                ProfileTag(Icons.Rounded.SettingsInputComponent, profile.governor)
-                ProfileTag(Icons.Rounded.SettingsSystemDaydream, "${profile.refreshRate} Hz")
+            
+            Spacer(modifier = Modifier.height(14.dp))
+            
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                ProfileTag(Icons.Rounded.SettingsInputComponent, profile.governor, isActive)
+                ProfileTag(Icons.Rounded.SettingsSystemDaydream, "${profile.refreshRate} Hz", isActive)
             }
         }
     }
 }
 
 @Composable
-fun ProfileTag(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(text = text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+fun ProfileTag(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, isActive: Boolean = false) {
+    val tagColor = if (isActive) ActiveProfileOrange else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+    
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .then(
+                if (isActive) Modifier.background(ActiveProfileOrange.copy(alpha = 0.1f))
+                else Modifier
+            )
+            .padding(horizontal = 6.dp, vertical = 3.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tagColor,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+            color = if (isActive) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
