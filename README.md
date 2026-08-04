@@ -33,6 +33,12 @@
 | Shizuku | Instalado y activo |
 | Opcional | Gemini API key (para análisis AI) |
 
+## 📲 Descargar APK
+
+**[⬇️ Descargar GameBoost Pro v1.0.0](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/v1.0.0/app-debug.apk)**
+
+> ⚠️ Al instalar, permite "Fuentes desconocidas" en la configuración de Android.
+
 ## 🚀 Instalación
 
 ### Opción 1: Compilar desde código fuente
