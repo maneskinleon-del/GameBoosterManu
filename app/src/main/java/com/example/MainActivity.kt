@@ -813,18 +813,7 @@ private val ActiveProfileOrange = Color(0xFFFF9100)
 fun ProfileCardCompact(profile: ProfileEntity, onClick: () -> Unit) {
     val isActive = profile.isActive
     val activeColor = ActiveProfileOrange
-    
-    // Animación para el brillo del perfil activo
-    val infiniteTransition = rememberInfiniteTransition(label = "activePulse")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.15f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
+    val activeBackgroundAlpha = 0.25f // Static alpha for active profile icon background
     
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 4.dp),
@@ -845,7 +834,7 @@ fun ProfileCardCompact(profile: ProfileEntity, onClick: () -> Unit) {
                         .size(48.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(
-                            if (isActive) activeColor.copy(alpha = glowAlpha)
+                            if (isActive) activeColor.copy(alpha = activeBackgroundAlpha)
                             else Color.White.copy(alpha = 0.05f)
                         )
                         .then(
