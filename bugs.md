@@ -25,6 +25,9 @@
 | **23** | Governor path solo probaba un layout de sysfs | 🟡 Medio | ✅ CORREGIDO | `GameBoostRepository.kt`, `ProfileManager.kt` |
 | **24** | Servicio no se reiniciaba automáticamente al ser matado | 🔴 Crítico | ✅ CORREGIDO | `GameBoostService.kt`, `ServiceWatchdogReceiver.kt` (nuevo), `BootReceiver.kt` (nuevo) |
 | **25** | Prioridad de notificación IMPORTANCE_LOW insuficiente anti-LMK | 🟡 Medio | ✅ CORREGIDO | `GameBoostService.kt` |
+| **26** | DNS no se aplicaba (escaping bug en RESTORE_COMMANDS) | 🟡 Medio | ✅ CORREGIDO | `NetworkOptimizer.kt` |
+| **27** | Optimizaciones de red no se aplicaban al cambiar de perfil | 🟡 Medio | ✅ CORREGIDO | `GameSessionManager.kt` |
+| **28** | Indicador de perfil activo poco distintivo | 🟢 Bajo | ✅ CORREGIDO | `MainActivity.kt` |
 
 ### Fixes previos (Julio 2026)
 
@@ -167,6 +170,9 @@ Solo permitidos: `[a-zA-Z0-9._-/]` (GameBoostRepository) y `[a-zA-Z0-9._-]` (Pro
 | **23** | Governor path incompleto | 🟡 | ✅ CORREGIDO |
 | **24** | Sin autoreinicio al ser matado | 🔴 | ✅ CORREGIDO |
 | **25** | Prioridad notificación baja | 🟡 | ✅ CORREGIDO |
+| **26** | DNS no se aplicaba (escaping bug) | 🟡 | ✅ CORREGIDO |
+| **27** | Optimizaciones de red no en cambio de perfil | 🟡 | ✅ CORREGIDO |
+| **28** | Indicador perfil activo poco distintivo | 🟢 | ✅ CORREGIDO |
 
 ### Pendientes más urgentes ahora:
 
@@ -179,7 +185,7 @@ Solo permitidos: `[a-zA-Z0-9._-/]` (GameBoostRepository) y `[a-zA-Z0-9._-]` (Pro
 | **5** | RamManager con delays secuenciales | `RamManager.kt` | 🟢 Bajo | ⏱ 30 min |
 | **6** | Nombres de juegos en inglés | `default_games.json` | 🟢 Bajo | ⏱ 15 min |
 | **7** | Watchdog batching de Android 13 (7 min en vez de 30s) | `ServiceWatchdogReceiver.kt` | 🟡 Medio | ⏱ 1 hr |
-| **8** | Governor no escribible en kernel ZTE (Permission denied) | — | 🟡 Medio | ❌ Bloqueado por kernel |
+| **8** | Governor no escribible en kernel ZTE (Permission denied) | — | 🟡 Medio | ✅ Mitigado (skip + mensaje) |
 | **9** | Temperatura CPU no legible (permisos kernel) | — | 🟢 Bajo | ❌ Bloqueado por kernel |
 
 ---
