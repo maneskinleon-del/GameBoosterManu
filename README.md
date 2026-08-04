@@ -23,6 +23,9 @@
 - **Panel flotante** con métricas en tiempo real (CPU, RAM, FPS, temperatura)
 - **Watchdog anti-LMK** — el servicio se reinicia automáticamente si Android lo mata
 - **Control de:** governor CPU, refresh rate, DPI, velocidad del puntero, animaciones
+- **DNS automático** — Google DNS (dns.google) se aplica al cambiar de perfil
+- **WiFi optimizado** — baja latencia + prioridad WiFi sobre Bluetooth
+- **Indicador visual naranja** — perfil activo destacado con badge "ACTIVO"
 
 ## 📱 Requisitos
 
@@ -34,7 +37,7 @@
 
 ## 📲 Descargar APK
 
-**[⬇️ Descargar GameBoost Pro v1.0.0](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/v1.0.0/app-debug.apk)**
+**[⬇️ Descargar GameBoost Pro v1.1.0](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/v1.1.0/app-debug.apk)**
 
 > ⚠️ Al instalar, permite "Fuentes desconocidas" en la configuración de Android.
 
@@ -126,11 +129,12 @@ bash medir_rendimiento.sh
 - [MEMORIA.md](MEMORIA.md) — Sesión de estabilidad y fixes
 - [PERFILES.md](PERFILES.md) — Detalle de perfiles de hardware
 - [SISTEMA_DE_MONITOREO.md](SISTEMA_DE_MONITOREO.md) — Sistema de métricas
-- [bugs.md](bugs.md) — Bug tracker
+- [bugs.md](bugs.md) — Bug tracker (28 bugs documentados)
+- [SESION-2026-08-04.md](SESION-2026-08-04.md) — Sesión DNS + UI improvements
 
 ## ⚠️ Limitaciones conocidas
 
-- Escritura de `scaling_governor` bloqueada en algunos kernels (ZTE, Xiaomi)
+- Escritura de `scaling_governor` bloqueada en algunos kernels (ZTE, Xiaomi) — **mitigado** con skip automático
 - Lectura de `thermal_zone` puede no funcionar sin permisos
 - `renice` y `taskset` requieren Shizuku activo
 - Android 13+ hace batching de AlarmManager (~7 min para Doze)
