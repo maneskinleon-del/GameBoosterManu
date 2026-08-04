@@ -602,6 +602,12 @@ class GameSessionManager(
         var failCount = 0
 
         for (cmd in commands) {
+            // Skip governor commands if kernel blocks writes (ZTE, Xiaomi, etc.)
+            if (cmd.contains("scaling_governor") && !isGovernorWritable()) {
+                addLog("DEBUG", tag, "Governor bloqueado por kernel — skip")
+                continue
+            }
+
             val res = ShizukuExecutor.runCommand(cmd)
             if (res.isSuccess) {
                 successCount++
@@ -609,11 +615,28 @@ class GameSessionManager(
                 val fallbackOk = trySettingsApiFallback(cmd)
                 if (fallbackOk) successCount++ else {
                     failCount++
-                    addLog("WARN", tag, "Fallo permanente en: $cmd")
+                    val friendlyMsg = when {
+                        cmd.contains("scaling_governor") -> "Governor no escribible (SELinux/Kernel bloquea)"
+                        cmd.contains("renice") || cmd.contains("taskset") -> "Permisos insuficientes para $cmd"
+                        else -> "Fallo: $cmd"
+                    }
+                    addLog("WARN", tag, friendlyMsg)
                 }
             }
         }
-        addLog("DEBUG", tag, "Comandos: $successCount OK, $failCount fallos")
+        if (failCount > 0) {
+            addLog("DEBUG", tag, "Comandos: $successCount OK, $failCount fallos")
+        }
+    }
+
+    /**
+     * Check if the scaling_governor is writable on this device.
+     * Returns false if SELinux or kernel blocks writes.
+     */
+    private suspend fun isGovernorWritable(): Boolean {
+        val testPath = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
+        val result = ShizukuExecutor.runCommand("[ -w \"$testPath\" ] && echo writable || echo readonly")
+        return result.getOrNull()?.trim() == "writable"
     }
 
     private fun trySettingsApiFallback(cmd: String): Boolean {
