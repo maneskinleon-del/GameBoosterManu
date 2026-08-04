@@ -519,6 +519,8 @@ class GameSessionManager(
 
             if (profileType != null) {
                 ProfileManager.applyProfile(profileType)
+                // Aplicar optimizaciones de red (DNS, WiFi low-latency, BT coex)
+                networkOptimizer.apply()
                 onProfileApplied?.invoke(profileType)
             }
         }

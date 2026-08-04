@@ -44,8 +44,8 @@ class NetworkOptimizer(
     )
 
     private val RESTORE_COMMANDS = listOf(
-        // Limpiar private DNS para que vuelva a automático
-        "settings put global private_dns_spec \"\"",
+        // Limpiar private DNS para que vuelva a automático (valor vacío)
+        "settings put global private_dns_spec ",
         // Restaurar coexistencia WiFi/BT
         "settings put global wifi_bt_coexistence 1"
     )
