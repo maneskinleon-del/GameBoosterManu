@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">GameBoost Pro</string>
+    <string name="accessibility_description">Permite a GameBoost detectar automáticamente cuándo inicias un juego para aplicar optimizaciones.</string>
+</resources>

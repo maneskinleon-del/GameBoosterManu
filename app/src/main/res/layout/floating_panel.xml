@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="2dp">
+
+    <!-- Efecto de brillo (para EXTREME) -->
+    <View
+        android:id="@+id/glowEffect"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:background="@drawable/glow_effect"
+        android:visibility="gone" />
+
+    <!-- Panel Expandido (Horizontal) -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/expandedCard"
+        android:layout_width="wrap_content"
+        android:layout_height="28dp"
+        app:cardCornerRadius="14dp"
+        app:cardBackgroundColor="#1A1A1A"
+        app:cardElevation="8dp"
+        android:alpha="0.95"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp">
+
+            <!-- Profile Icon in Expanded state -->
+            <TextView
+                android:id="@+id/tvProfileIconExpanded"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⚖️"
+                android:textSize="11sp"
+                android:layout_marginEnd="2dp" />
+
+            <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
+
+            <!-- Temp -->
+            <LinearLayout
+                android:id="@+id/llStatTemp"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:padding="1dp">
+                <TextView
+                    android:id="@+id/tvStatTemp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🌡️ --"
+                    android:textSize="9sp"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
+
+            <!-- Battery -->
+            <LinearLayout
+                android:id="@+id/llStatBattery"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:padding="1dp">
+                <TextView
+                    android:id="@+id/tvStatBattery"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🔋 --"
+                    android:textSize="9sp"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
+
+            <!-- RAM -->
+            <LinearLayout
+                android:id="@+id/llStatRam"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:padding="1dp">
+                <TextView
+                    android:id="@+id/tvStatRam"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🧠 --"
+                    android:textSize="9sp"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
+
+            <!-- Ping -->
+            <LinearLayout
+                android:id="@+id/llStatPing"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:padding="1dp">
+                <TextView
+                    android:id="@+id/tvStatPing"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🌐 --"
+                    android:textSize="9sp"
+                    android:textColor="#FFFFFF" />
+            </LinearLayout>
+
+            <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
+
+            <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
+
+            <!-- Close btn -->
+            <TextView
+                android:id="@+id/btnCollapse"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✕"
+                android:textSize="14sp"
+                android:textColor="#FFFFFF"
+                android:padding="2dp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- Panel Colapsado (Pequeña Burbuja con Icono) -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/panelCard"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        app:cardCornerRadius="14dp"
+        app:cardBackgroundColor="@color/profile_balanced"
+        app:cardElevation="8dp"
+        android:alpha="0.9">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <TextView
+                android:id="@+id/tvProfileIconSmall"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="⚖️"
+                android:textSize="14sp" />
+
+            <!-- We keep these for compatibility but hidden -->
+            <ImageView
+                android:id="@+id/ivProfileIcon"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+            <TextView
+                android:id="@+id/tvProfileName"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+        </FrameLayout>
+    </androidx.cardview.widget.CardView>
+</FrameLayout>

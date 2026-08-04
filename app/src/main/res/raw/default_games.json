@@ -1,0 +1,19 @@
+[
+  {"packageName": "com.dts.freefireth", "displayName": "Free Fire"},
+  {"packageName": "com.dts.freefiremax", "displayName": "Free Fire MAX"},
+  {"packageName": "com.tencent.ig", "displayName": "PUBG Mobile"},
+  {"packageName": "com.pubg.imobile", "displayName": "BGMI"},
+  {"packageName": "com.tencent.tmgp.pubgm", "displayName": "PUBG Mobile (CN)"},
+  {"packageName": "com.mobile.legends", "displayName": "Mobile Legends"},
+  {"packageName": "com.riotgames.league.wildrift", "displayName": "Wild Rift"},
+  {"packageName": "com.activision.callofduty.shooter", "displayName": "COD Mobile"},
+  {"packageName": "com.garena.game.codm", "displayName": "COD Mobile (Garena)"},
+  {"packageName": "com.supercell.brawlstars", "displayName": "Brawl Stars"},
+  {"packageName": "com.epicgames.fortnite", "displayName": "Fortnite"},
+  {"packageName": "com.hoyoverse.genshinimpact", "displayName": "Genshin Impact"},
+  {"packageName": "com.mojang.minecraftpe", "displayName": "Minecraft"},
+  {"packageName": "com.roblox.client", "displayName": "Roblox"},
+  {"packageName": "com.ea.gp.apexlegendsmobilefps", "displayName": "Apex Legends"},
+  {"packageName": "com.levelinfinite.hotta.gp", "displayName": "Tower of Fantasy"},
+  {"packageName": "com.garena.game.kgth", "displayName": "Free Fire (TH)"}
+]

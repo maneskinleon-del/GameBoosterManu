@@ -1,0 +1,37 @@
+# Built application files
+*.apk
+*.aar
+*.jar
+*.war
+
+# Gradle / build outputs
+.gradle/
+build/
+**/build/
+
+# Local config (SDK path, signing, etc.)
+local.properties
+gradle.properties.local
+
+# Log / OS files
+*.log
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+.DS_Store
+captures/
+
+# Keystore / signing
+*.jks
+*.keystore
+
+# External native build
+.externalNativeBuild/
+.cxx/
+
+# Kotlin
+.kotlin/
+
+# User-specific / runtime
+*.tmp

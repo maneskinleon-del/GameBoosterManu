@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer Ring Glow -->
+    <path
+        android:pathData="M54,15A39,39 0,1 0,54 93A39,39 0,1 0,54 15"
+        android:strokeWidth="1"
+        android:strokeColor="#22D3EE"
+        android:fillColor="#00000000" />
+
+    <!-- Shield Shape -->
+    <path
+        android:pathData="M54,25L78,32V50C78,65 68,78 54,83C40,78 30,65 30,50V32L54,25Z"
+        android:fillColor="#0B1326"
+        android:strokeWidth="2"
+        android:strokeColor="#8AEBFF" />
+
+    <!-- Lightning Bolt -->
+    <path
+        android:pathData="M58,35L38,58H50L45,75L68,48H56L62,35Z"
+        android:fillColor="#8AEBFF" />
+
+    <!-- Tech corners -->
+    <path
+        android:pathData="M20,20L30,20M20,20L20,30M88,20L78,20M88,20L88,30M20,88L30,88M20,88L20,78M88,88L78,88M88,88L88,78"
+        android:strokeWidth="2"
+        android:strokeColor="#22D3EE"
+        android:strokeLineCap="round" />
+</vector>
