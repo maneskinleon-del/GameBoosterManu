@@ -139,6 +139,63 @@ bash medir_rendimiento.sh
 - `renice` y `taskset` requieren Shizuku activo
 - Android 13+ hace batching de AlarmManager (~7 min para Doze)
 
+## 🔑 Shizuku: situación y requisito crítico
+
+**GameBoost Pro necesita Shizuku activo** para ejecutar comandos privilegiados (governor, refresh rate, DPI, pointer speed) sin root.
+
+### ⚠️ Usar el Shizuku CLÁSICO (RikkaApps), NO el fork Shizuku+
+
+| | Shizuku clásico (RikkaApps) | Fork Shizuku+ |
+|---|---|---|
+| Permiso API | `moe.shizuku.manager.permission.API_V23` | `af.shizuku.plus.permission.API_V23` |
+| Compatibilidad | ✅ **Funciona con GameBoost Pro** | ❌ **NO funciona** — la app pide el permiso clásico y el fork no lo concede |
+| Servidor | `shizuku_server` | `shizuku_plus_server` |
+| Verificación | `logcat \| grep ShizukuExecutor` → `✅ Shizuku OK` | Usa `SUBridge` (mecanismo distinto) |
+
+**Síntoma del fork**: la app se abre pero los comandos privilegiados fallan silenciosamente (el logcat de `ShizukuExecutor` queda vacío). El fork usa `af.shizuku.plus.permission.API_V23` mientras que GameBoost Pro (y GG Mouse Pro 2) esperan `moe.shizuku.manager.permission.API_V23` → `granted=false`.
+
+**Solución**: desinstalar el fork e instalar el clásico desde [RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku/releases), luego activar por ADB:
+
+```bash
+# Fix de batería (capas chinas: Xiaomi/HyperOS, ZTE, Vivo, Huawei)
+adb shell 'dumpsys deviceidle whitelist +moe.shizuku.privileged.api'
+adb shell 'cmd appops set moe.shizuku.privileged.api RUN_ANY_IN_BACKGROUND allow'
+adb shell 'am set-standby-bucket moe.shizuku.privileged.api active'
+
+# Activar (método oficial 13.6.0+)
+APK_DIR=$(adb shell 'pm path moe.shizuku.privileged.api' | sed 's/package://; s|/base.apk||')
+adb shell "cp $APK_DIR/lib/arm64/libshizuku.so /data/local/tmp/shizuku && chmod 755 /data/local/tmp/shizuku"
+adb shell '/data/local/tmp/shizuku'
+
+# Conceder permiso a la app
+adb shell pm grant com.manuel.gameboostpro moe.shizuku.manager.permission.API_V23
+```
+
+> ⚠️ El servidor Shizuku **muere al reiniciar el teléfono** — hay que re-ejecutar `/data/local/tmp/shizuku` tras cada reinicio (o usar depuración inalámbrica).
+
+## 🖱️ Keymapper recomendado: GG Mouse Pro 2
+
+Para jugar Free Fire con mouse/teclado desde PC (scrcpy), **GG Mouse Pro 2** es el keymapper que mejor funciona con este setup:
+
+- **Paquete**: `com.zjx.ztezscreenshot`
+- **Activación**: Shizuku (requiere el clásico, ver arriba)
+- **Compatibilidad Free Fire**: ✅ Excelente
+- **Riesgo de ban**: Muy bajo (no clona el APK del juego)
+
+```bash
+# Permisos necesarios
+adb shell appops set com.zjx.ztezscreenshot SYSTEM_ALERT_WINDOW allow
+adb shell dumpsys deviceidle whitelist +com.zjx.ztezscreenshot
+adb shell pm grant com.zjx.ztezscreenshot moe.shizuku.manager.permission.API_V23
+```
+
+> ⚠️ **No usar el fork Shizuku+ con GG Mouse Pro 2** — mismo problema que con GameBoost Pro: el fork no concede el permiso clásico y el keymapper no puede inyectar comandos.
+
+**Alternativas evaluadas** (no recomendadas para este caso):
+- **Mantis Gamepad Pro** — mapper de *gamepad* físico, NO de teclado/mouse. No sirve para este setup.
+- **Octopus** — clona el APK (virtual sandbox) → **alto riesgo de ban** en Free Fire. Evitar.
+- **Panda Mouse Pro** — compatible pero con más drift y problemas ocasionales con anti-cheat.
+
 ## 📄 Licencia
 
 MIT License
