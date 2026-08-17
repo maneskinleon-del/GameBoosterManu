@@ -20,6 +20,7 @@ object PreferenceManager {
     private const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
     private const val KEY_DEEP_SLEEP_OPTIMIZATIONS = "deep_sleep_optimizations"
     private const val KEY_FORCE_SCRCPY_MODE = "force_scrcpy_mode"
+    private const val KEY_ACCESSIBILITY_PROMPTED = "accessibility_prompted"
 
   /** Devuelve `true` si existe la clave custom_dpi guardada */
   fun isDpiForced(context: Context): Boolean =
@@ -47,6 +48,15 @@ object PreferenceManager {
     
     fun isServiceRunning(context: Context): Boolean {
         return getPreferences(context).getBoolean(KEY_IS_RUNNING, false)
+    }
+    
+    /** Flag "ya se preguntó por accesibilidad": evita abrir Ajustes en cada arranque. */
+    fun isAccessibilityPrompted(context: Context): Boolean {
+        return getPreferences(context).getBoolean(KEY_ACCESSIBILITY_PROMPTED, false)
+    }
+    
+    fun setAccessibilityPrompted(context: Context, prompted: Boolean) {
+        getPreferences(context).edit().putBoolean(KEY_ACCESSIBILITY_PROMPTED, prompted).apply()
     }
     
     fun setServiceRunning(context: Context, running: Boolean) {

@@ -1,9 +1,12 @@
 package com.example
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.view.accessibility.AccessibilityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -173,8 +176,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Accesibilidad: pedir UNA sola vez (flag persistente). Después, el
+        // estado se muestra pasivo en la tarjeta ACCESIBILIDAD (apertura manual
+        // desde el dashboard) — nunca más se secuestra el arranque con Ajustes.
         if (!isAccessibilityServiceEnabled()) {
-            if (!onlySilentCheck) {
+            if (!onlySilentCheck && !PreferenceManager.isAccessibilityPrompted(this)) {
+                PreferenceManager.setAccessibilityPrompted(this, true)
                 try {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 } catch (e: Exception) {}
@@ -182,10 +189,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Detección robusta vía AccessibilityManager (no lee Settings.Secure por
+     *  string — evita lecturas stale en proceso en Android 8+). */
+    @Suppress("DEPRECATION")
     private fun isAccessibilityServiceEnabled(): Boolean {
         if (com.example.service.UnifiedAccessibilityService.isServiceRunning) return true
-        val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-        return enabledServices.contains(packageName) && enabledServices.contains("UnifiedAccessibilityService")
+        val am = getSystemService(AccessibilityManager::class.java) ?: return false
+        val expected = ComponentName(this, com.example.service.UnifiedAccessibilityService::class.java)
+        return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .any { it.resolveInfo.serviceInfo.packageName == expected.packageName &&
+                   it.resolveInfo.serviceInfo.name == expected.className }
     }
 }
 
