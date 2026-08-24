@@ -37,7 +37,7 @@
 
 ## 📲 Descargar APK
 
-**[⬇️ Descargar GameBoost Pro v1.2.2](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/v1.2.2/app-debug.apk)**
+**[⬇️ Descargar GameBoost Pro v1.2.3](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/v1.2.3/app-debug.apk)**
 
 > ⚠️ Al instalar, permite "Fuentes desconocidas" en la configuración de Android.
 
