@@ -154,7 +154,7 @@ class UnifiedAccessibilityService : AccessibilityService() {
             // ── LOG: checkpoint #2 ──
             Log.d("FSM_DIAG", "UnifiedA11y.setForegroundApp($packageName) ts=${System.currentTimeMillis()}")
 
-            repository?.setForegroundApp(packageName)
+            repository?.onForegroundAppChanged(packageName)
 
             // Si cambiamos de app, cancelamos el monitoreo del botón ADS
             // (el nuevo paquete será evaluado en el próximo WINDOW_CONTENT_CHANGED

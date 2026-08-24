@@ -226,7 +226,7 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
 
     // ─── Game detection ─────────────────────────────────────────
 
-    private fun isGamePackage(packageName: String): Boolean {
+    internal fun isGamePackage(packageName: String): Boolean {
         if (knownGames.containsKey(packageName)) return true
 
         return packageName.contains("freefire") ||

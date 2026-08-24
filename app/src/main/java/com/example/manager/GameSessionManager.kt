@@ -293,6 +293,10 @@ class GameSessionManager(
 
         hysteresisJob.getAndSet(null)?.cancel()
 
+        // Si el usuario eligió un perfil manualmente, no pisarlo con la
+        // auto-detección (re-detección del mismo juego, reconexión de Shizuku, etc.).
+        if (manualOverrideActive) return
+
         if (_simulatedGame.value != null && _simulatedGame.value != packageName) {
             manualOverrideActive = false
         }
@@ -450,6 +454,7 @@ class GameSessionManager(
                 if (oldGame != null || _fsmState.value == FsmState.GAME_ACTIVE) {
                     _simulatedGame.value = null
                     _fsmState.value = FsmState.READY
+                    manualOverrideActive = false
                     addLog("INFO", "Monitor", "Salida de juego confirmada ($oldGame)")
 
                     executePrivilegedCommands(
@@ -476,7 +481,9 @@ class GameSessionManager(
                         addLog("INFO", "Monitor", "Dispositivos externos siguen conectados. Manteniendo FF MOUSE DUO.")
                         // No cambiar perfil, queda ff_mouse si estaba en eso
                     } else {
-                        setActiveProfile("balanced", isManual = false)
+                        if (!manualOverrideActive) {
+                            setActiveProfile("balanced", isManual = false)
+                        }
                     }
 
                     if (_isMobiladorActive.value) toggleMobilador()
@@ -530,7 +537,9 @@ class GameSessionManager(
     fun onExternalDeviceDetectedWhileGaming(isConnected: Boolean) {
         if (isConnected && _fsmState.value == FsmState.GAME_ACTIVE) {
             addLog("INFO", "Monitor", "Dispositivo externo detectado en caliente. Aplicando perfil FF Mouse Duo.")
-            setActiveProfile("ff_mouse", isManual = false)
+            if (!manualOverrideActive) {
+                setActiveProfile("ff_mouse", isManual = false)
+            }
         }
     }
 

@@ -224,6 +224,21 @@ class GameBoostRepository private constructor(private val context: Context) {
     fun toggleMobilador() = sessionManager.toggleMobilador()
     fun toggleShizukuState() = sessionManager.recheckShizuku()
     fun setForegroundApp(packageName: String) = sessionManager.setForegroundApp(packageName)
+
+    /**
+     * Punto único para cambios de app en foreground (GameDetector y
+     * UnifiedAccessibilityService). Filtra por juego para que apps que no lo son
+     * (launcher, capturas, tiendas, gameassist) no disparen auto-detección ni
+     * pisen la selección manual del usuario.
+     */
+    fun onForegroundAppChanged(packageName: String) {
+        if (gameDetector.isGamePackage(packageName)) {
+            sessionManager.setForegroundApp(packageName)
+        } else {
+            sessionManager.onForegroundAppLost()
+        }
+    }
+
     fun simulateGameLaunch(packageName: String?) {
         repositoryScope.launch { sessionManager.simulateGameLaunch(packageName) }
     }
