@@ -20,7 +20,7 @@ object PreferenceManager {
     private const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
     private const val KEY_DEEP_SLEEP_OPTIMIZATIONS = "deep_sleep_optimizations"
     private const val KEY_FORCE_SCRCPY_MODE = "force_scrcpy_mode"
-    private const val KEY_ACCESSIBILITY_PROMPTED = "accessibility_prompted"
+    private const val KEY_ACCESSIBILITY_ONBOARDING_SHOWN = "accessibility_onboarding_shown"
 
   /** Devuelve `true` si existe la clave custom_dpi guardada */
   fun isDpiForced(context: Context): Boolean =
@@ -50,13 +50,13 @@ object PreferenceManager {
         return getPreferences(context).getBoolean(KEY_IS_RUNNING, false)
     }
     
-    /** Flag "ya se preguntó por accesibilidad": evita abrir Ajustes en cada arranque. */
-    fun isAccessibilityPrompted(context: Context): Boolean {
-        return getPreferences(context).getBoolean(KEY_ACCESSIBILITY_PROMPTED, false)
+    /** Flag "ya se mostró onboarding de accesibilidad": evita mostrar diálogo en cada instalación. */
+    fun isAccessibilityOnboardingShown(context: Context): Boolean {
+        return getPreferences(context).getBoolean(KEY_ACCESSIBILITY_ONBOARDING_SHOWN, false)
     }
     
-    fun setAccessibilityPrompted(context: Context, prompted: Boolean) {
-        getPreferences(context).edit().putBoolean(KEY_ACCESSIBILITY_PROMPTED, prompted).apply()
+    fun setAccessibilityOnboardingShown(context: Context, shown: Boolean) {
+        getPreferences(context).edit().putBoolean(KEY_ACCESSIBILITY_ONBOARDING_SHOWN, shown).apply()
     }
     
     fun setServiceRunning(context: Context, running: Boolean) {

@@ -46,14 +46,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.example.data.PreferenceManager
 import kotlin.math.roundToInt
 import com.example.data.database.ProfileEntity
 import com.example.data.repository.SystemMetrics
 import com.example.manager.ProfileManager
 import com.example.service.GameBoostService
+import com.example.service.UnifiedAccessibilityService
 import com.example.ui.FloatingPanelManager
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.WarningOrange
@@ -175,24 +179,12 @@ class MainActivity : ComponentActivity() {
                 if (!onlySilentCheck) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
             }
         }
-
-        // Accesibilidad: pedir UNA sola vez (flag persistente). Después, el
-        // estado se muestra pasivo en la tarjeta ACCESIBILIDAD (apertura manual
-        // desde el dashboard) — nunca más se secuestra el arranque con Ajustes.
-        if (!isAccessibilityServiceEnabled()) {
-            if (!onlySilentCheck && !PreferenceManager.isAccessibilityPrompted(this)) {
-                PreferenceManager.setAccessibilityPrompted(this, true)
-                try {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                } catch (e: Exception) {}
-            }
-        }
     }
 
     /** Detección robusta vía AccessibilityManager (no lee Settings.Secure por
      *  string — evita lecturas stale en proceso en Android 8+). */
     @Suppress("DEPRECATION")
-    private fun isAccessibilityServiceEnabled(): Boolean {
+    fun isAccessibilityServiceEnabled(): Boolean {
         if (com.example.service.UnifiedAccessibilityService.isServiceRunning) return true
         val am = getSystemService(AccessibilityManager::class.java) ?: return false
         val expected = ComponentName(this, com.example.service.UnifiedAccessibilityService::class.java)
@@ -307,6 +299,7 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
     val activeProfile = profiles.find { it.isActive }
     
     val health by viewModel.healthStatus.collectAsStateWithLifecycle()
+    val depState by viewModel.dependencyState.collectAsStateWithLifecycle()
     
     var dpiIndex by remember { mutableIntStateOf(4) }
     val currentPointerSpeed by viewModel.pointerSpeed.collectAsStateWithLifecycle()
@@ -327,13 +320,15 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         SectionCard(
-            title = "WATCHDOG - ESTADO DEL SISTEMA",
+            title = "DEPENDENCIAS DEL SISTEMA",
             icon = Icons.Rounded.Security
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                HealthBadge("Shizuku", health.shizukuAlive)
-                HealthBadge("Accesibilidad", health.accessibilityAlive)
-                HealthBadge("Servicio", health.serviceAlive)
+            val dep = depState
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DependencyRow("Shizuku", dep.shizuku.state.name, dep.shizuku.state == com.example.data.repository.DependencyState.Shizuku.ShizukuState.ON, Icons.Rounded.Usb)
+                DependencyRow("Accesibilidad", dep.accessibility.state.name, dep.accessibility.state == com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE, Icons.Rounded.AccessibilityNew)
+                DependencyRow("Batería", dep.batteryOptimization.state.name, dep.batteryOptimization.state == com.example.data.repository.DependencyState.BatteryOptimization.BatteryState.UNRESTRICTED, Icons.Rounded.BatteryChargingFull)
+                DependencyRow("GameBoostService", dep.gameBoostService.state.name, dep.gameBoostService.state == com.example.data.repository.DependencyState.GameBoostService.ServiceState.RUNNING, Icons.Rounded.Memory)
             }
             if (health.restartCount > 0) {
                 Text(
@@ -415,10 +410,29 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
             }
         }
 
+// Refresh inmediato de DependencyStateManager al volver de Settings (onResume),
+        // sin esperar al intervalo de 15s. depState.accessibility es la fuente única de verdad.
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    viewModel.refreshDependencyState()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+
+        // Onboarding dialog state
+        var showOnboarding by remember {
+            mutableStateOf(
+                !UnifiedAccessibilityService.isServiceRunning &&
+                !PreferenceManager.isAccessibilityOnboardingShown(context)
+            )
+        }
+
         // --- TARJETAS DE ESTADO SHIZUKU Y ACCESIBILIDAD ---
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            val isAccessibilityActive = com.example.service.UnifiedAccessibilityService.isServiceRunning
-            
             StatusCard(
                 modifier = Modifier.weight(1f),
                 title = "SHIZUKU",
@@ -438,15 +452,45 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
                     }
                 }
             )
+
             StatusCard(
                 modifier = Modifier.weight(1f),
                 title = "ACCESIBILIDAD",
-                isActive = isAccessibilityActive,
+                isActive = depState.accessibility.state == com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE,
                 icon = Icons.Rounded.AccessibilityNew,
                 onClick = {
                     try {
                         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     } catch (e: Exception) {}
+                }
+            )
+        }
+
+        // Accessibility status banner
+        if (depState.accessibility.state != com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = WarningOrange.copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, WarningOrange.copy(alpha = 0.3f)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Servicio inactivo — toque la tarjeta para activar",
+                         style = MaterialTheme.typography.labelSmall, color = WarningOrange)
+                    Icon(Icons.Rounded.ArrowForward, contentDescription = null, tint = WarningOrange, modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+
+        // Onboarding dialog
+        if (!UnifiedAccessibilityService.isServiceRunning && !PreferenceManager.isAccessibilityOnboardingShown(context)) {
+            AccessibilityOnboardingDialog(
+                onDismiss = {
+                    PreferenceManager.setAccessibilityOnboardingShown(context, true)
                 }
             )
         }
@@ -635,6 +679,36 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun DependencyRow(
+    label: String,
+    state: String,
+    isActive: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (isActive) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.4f),
+                modifier = Modifier.size(20.dp)
+            )
+            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = Color.White)
+        }
+        Text(
+            state,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (isActive) MaterialTheme.colorScheme.secondary else WarningOrange
+        )
     }
 }
 
@@ -1145,5 +1219,54 @@ fun HealthBadge(label: String, isAlive: Boolean) {
             text = if (isAlive) "✅" else "❌",
             fontSize = 10.sp
         )
+    }
+}
+
+@Composable
+fun AccessibilityOnboardingDialog(onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1326)),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    Text("Permiso de Accesibilidad requerido",
+                         style = MaterialTheme.typography.headlineSmall,
+                         fontWeight = FontWeight.Bold,
+                         color = Color.White)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("En algunos dispositivos ZTE/MyOS puede ser necesario revisar la configuración de batería y autoinicio para mantener este servicio activo.",
+                         style = MaterialTheme.typography.bodyMedium,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.BatteryChargingFull, contentDescription = null, tint = WarningOrange, modifier = Modifier.size(20.dp))
+                            Text("Configuración → Batería → Sin restricciones para GameBoost Pro",
+                                 style = MaterialTheme.typography.bodyMedium,
+                                 color = MaterialTheme.colorScheme.onSurface)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
+                            Text("Configuración → Autoinicio → Activado para GameBoost Pro",
+                                 style = MaterialTheme.typography.bodyMedium,
+                                 color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Entendido", fontWeight = FontWeight.Bold, color = Color.Black)
+                    }
+                }
+            }
+        }
     }
 }

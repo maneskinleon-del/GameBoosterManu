@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import com.example.data.PreferenceManager
+import com.example.data.repository.DependencyState
 import com.example.data.repository.FsmState
 import com.example.data.repository.GameBoostRepository
 import com.example.service.GameBoostService
@@ -20,6 +21,7 @@ import kotlin.math.pow
 /**
  * WatchdogManager avanzado (Heartbeat)
  * Implementa resiliencia con Backoff Exponencial y Doble Validación.
+ * Ahora usa DependencyStateManager para el estado unificado de dependencias.
  */
 class WatchdogManager(
     private val context: Context,
@@ -47,12 +49,13 @@ class WatchdogManager(
         val shizukuAlive: Boolean,
         val accessibilityAlive: Boolean,
         val serviceAlive: Boolean,
+        val batteryUnrestricted: Boolean,
         val lastCheck: Long = System.currentTimeMillis(),
         val restartCount: Int = 0,
         val statusMessage: String = "Healthy"
     )
 
-    private val _healthStatus = MutableStateFlow(HealthStatus(false, false, false))
+    private val _healthStatus = MutableStateFlow(HealthStatus(false, false, false, false))
     val healthStatus = _healthStatus.asStateFlow()
 
     private var totalRestarts = 0
@@ -86,15 +89,20 @@ class WatchdogManager(
     }
 
     private suspend fun checkHealth() {
-        val shizukuHealthy = doubleCheckShizuku()
-        val accessibility = com.example.service.UnifiedAccessibilityService.isServiceRunning
+        // Usar el nuevo DependencyStateManager para obtener estado unificado
+        val depState = repository.dependencyState.value
+        
+        val shizukuHealthy = depState.shizuku.state == com.example.data.repository.DependencyState.Shizuku.ShizukuState.ON
+        val accessibility = depState.accessibility.state == com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE
         val serviceRunning = GameBoostService.isRunning
-        val shouldBeRunning = PreferenceManager.isServiceRunning(context)
+        val batteryUnrestricted = depState.batteryOptimization.state == com.example.data.repository.DependencyState.BatteryOptimization.BatteryState.UNRESTRICTED
+        val shouldBeRunning = com.example.data.PreferenceManager.isServiceRunning(context)
 
         _healthStatus.value = HealthStatus(
             shizukuAlive = shizukuHealthy,
             accessibilityAlive = accessibility,
             serviceAlive = serviceRunning,
+            batteryUnrestricted = batteryUnrestricted,
             restartCount = totalRestarts,
             statusMessage = repository.fsmState.value.name
         )

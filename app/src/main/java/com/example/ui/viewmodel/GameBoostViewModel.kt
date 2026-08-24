@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.LogEntity
 import com.example.data.database.ProfileEntity
+import com.example.data.repository.DependencyState
 import com.example.data.repository.GameBoostRepository
 import com.example.data.repository.SystemMetrics
 import com.example.manager.ShizukuExecutor
@@ -32,6 +33,10 @@ class GameBoostViewModel(private val repository: GameBoostRepository) : ViewMode
     val isMobiladorActive: StateFlow<Boolean> = repository.isMobiladorActive
     val externalDevicesConnected: StateFlow<Boolean> = repository.externalDevicesConnected
     val healthStatus = repository.healthStatus
+    val dependencyState = repository.dependencyState
+
+    /** Fuerza un refresh inmediato del estado de dependencias (ej: al volver de Settings). */
+    fun refreshDependencyState() = repository.refreshDependencyState()
     val isAggressiveOptimizationEnabled = repository.isAggressiveOptimizationEnabled
     val isThermalWatchdogEnabled = repository.isThermalWatchdogEnabled
     val isAutoDetectGamesEnabled = repository.isAutoDetectGamesEnabled

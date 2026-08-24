@@ -86,6 +86,13 @@ class GameBoostRepository private constructor(private val context: Context) {
     // Watchdog (depende de this)
     private val watchdogManager = WatchdogManager(context, this)
 
+    // Dependency State Manager
+    private val dependencyStateManager = DependencyStateManager(context)
+    val dependencyState = dependencyStateManager.dependencyState
+
+    /** Fuerza un refresh inmediato del estado de dependencias (ej: al volver de Settings). */
+    fun refreshDependencyState() = dependencyStateManager.refreshAll()
+
     // Active profile cache (evita runBlocking en lambdas)
     @Volatile
     private var cachedActiveProfile: ProfileEntity? = null
@@ -149,6 +156,7 @@ class GameBoostRepository private constructor(private val context: Context) {
                     thermalController.setup()
                     systemMonitor.start()
                     watchdogManager.start()
+                    dependencyStateManager.start()
                     resourceGovernor.start()
 
                     // 5. Iniciar GameDetector (auto-detección de juegos)
