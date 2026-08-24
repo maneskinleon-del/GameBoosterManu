@@ -295,7 +295,9 @@ class GameSessionManager(
 
         // Si el usuario eligió un perfil manualmente, no pisarlo con la
         // auto-detección (re-detección del mismo juego, reconexión de Shizuku, etc.).
-        if (manualOverrideActive) return
+        if (manualOverrideActive) {
+            return
+        }
 
         if (_simulatedGame.value != null && _simulatedGame.value != packageName) {
             manualOverrideActive = false
@@ -454,6 +456,14 @@ class GameSessionManager(
                 if (oldGame != null || _fsmState.value == FsmState.GAME_ACTIVE) {
                     _simulatedGame.value = null
                     _fsmState.value = FsmState.READY
+                    if (manualOverrideActive) {
+                        // El usuario eligió un perfil manual: respetarlo. Solo
+                        // limpiamos la flag para que la auto-detección funcione en
+                        // el próximo juego, pero NO apagamos boost ni restauramos
+                        // tweaks ni bajamos a balanced.
+                        manualOverrideActive = false
+                        return@launch
+                    }
                     manualOverrideActive = false
                     addLog("INFO", "Monitor", "Salida de juego confirmada ($oldGame)")
 

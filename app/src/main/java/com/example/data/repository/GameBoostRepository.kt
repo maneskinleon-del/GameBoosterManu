@@ -163,6 +163,13 @@ class GameBoostRepository private constructor(private val context: Context) {
                     gameDetector.onGameDetected = { pkg ->
                         Log.d("GameDetector", "🎮 Auto-detect: $pkg")
                         sessionManager.setForegroundApp(pkg)
+                        // (d) Re-mostrar overlay si el boost está activo pero la vista fue
+                        // ocultada (p.ej. botón x) y volviste al juego sin pasar por la app.
+                        // No enciende boost ni perf mode: solo refleja el estado ya activo.
+                        val fpm = FloatingPanelManager.getInstance(context)
+                        if (sessionManager.isBoostActive.value && !fpm.isOverlayVisible()) {
+                            fpm.show()
+                        }
                     }
                     gameDetector.onGameExited = {
                         Log.d("GameDetector", "Salida de juego detectada")

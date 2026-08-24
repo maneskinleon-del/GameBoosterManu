@@ -346,4 +346,7 @@ class FloatingPanelManager(private val appContext: Context) {
     fun toggleVisibility() {
         if (isVisible) hide() else show()
     }
+
+    /** True si la vista está actualmente agregada al WindowManager. */
+    fun isOverlayVisible(): Boolean = isVisible
 }

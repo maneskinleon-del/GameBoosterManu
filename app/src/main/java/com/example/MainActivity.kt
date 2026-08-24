@@ -144,6 +144,20 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         checkAndRequestPermissions(onlySilentCheck = true)
+
+        // (d) Re-evaluar overlay al reabrir la app: si el boost sigue activo pero la
+        // vista fue ocultada (p.ej. botón x), mostrarla de nuevo. No activa boost ni
+        // perf mode: solo refleja el estado ya activo. No reintroduce el "boost fantasma"
+        // de Opción B porque no enciende boost, solo lo muestra si ya está en true.
+        try {
+            val repo = com.example.data.repository.GameBoostRepository.getInstance(this)
+            val fpm = com.example.ui.FloatingPanelManager.getInstance(this)
+            if (repo.isBoostActive.value && !fpm.isOverlayVisible()) {
+                fpm.show()
+            }
+        } catch (e: Exception) {
+            Log.w("GameBoostApp", "onResume overlay re-eval: ${e.message}")
+        }
     }
 
     override fun onStart() {

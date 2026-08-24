@@ -39,6 +39,31 @@ class GameBoostService : Service() {
         super.onCreate()
         Log.d(TAG, "✅ Servicio creado")
         isRunning = true
+
+        // Re-detectar el juego en foreground al arrancar (Opción B): solo restaurar
+        // boost si hay un juego en primer plano. Delay + re-intento porque la consulta
+        // inmediata da null (UsageStats no alcanza a registrar y el fallback shell tampoco).
+        try {
+            val repo = com.example.data.repository.GameBoostRepository.getInstance(this)
+            serviceScope.launch {
+                try {
+                    delay(2000)
+                    var fg = repo.gameDetector.getCurrentForegroundApp()
+                    if (fg.isNullOrBlank()) {
+                        delay(1500)
+                        fg = repo.gameDetector.getCurrentForegroundApp()
+                    }
+                    if (!fg.isNullOrBlank() && repo.gameDetector.isGamePackage(fg)) {
+                        repo.simulateGameLaunch(fg)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error en re-detección foreground: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo re-detectar foreground: ${e.message}")
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             createNotificationChannel()
         }

@@ -277,6 +277,13 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
         lastForegroundApp = null
     }
 
+    /**
+     * Devuelve el paquete actual en primer plano (UsageStats o fallback shell).
+     * Usado por GameBoostService para re-detectar el juego al arrancar el servicio
+     * tras la muerte del proceso.
+     */
+    suspend fun getCurrentForegroundApp(): String? = getForegroundApp()
+
     fun stop() {
         isStarted = false
         // Desregistrar del lifecycle para evitar leaks
