@@ -234,6 +234,7 @@ class GameBoostService : Service() {
                                 FloatingPanelManager.getInstance(this@GameBoostService).show()
                             } else {
                                 FloatingPanelManager.getInstance(this@GameBoostService).hide()
+                                updateNotification("Optimizer Service Running")
                             }
                         }
                     }

@@ -136,7 +136,7 @@ class GameBoostRepository private constructor(private val context: Context) {
     // Game list cache
     private val _gamesCache = mutableMapOf<String, String>()
 
-    private val initTimeoutMs = 10_000L
+    private val initTimeoutMs = 30_000L
 
     init {
         repositoryScope.launch {

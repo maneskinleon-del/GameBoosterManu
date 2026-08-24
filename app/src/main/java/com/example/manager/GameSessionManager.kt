@@ -85,6 +85,7 @@ class GameSessionManager(
     // ─── Hysteresis ────────────────────────────────────────────────
     private val hysteresisJob = AtomicReference<Job?>(null)
     private var manualOverrideActive = false
+    private var currentProfileId: String? = null
 
     // Callbacks para comunicación hacia afuera
     var onProfileApplied: ((ProfileManager.ProfileType) -> Unit)? = null
@@ -293,12 +294,6 @@ class GameSessionManager(
 
         hysteresisJob.getAndSet(null)?.cancel()
 
-        // Si el usuario eligió un perfil manualmente, no pisarlo con la
-        // auto-detección (re-detección del mismo juego, reconexión de Shizuku, etc.).
-        if (manualOverrideActive) {
-            return
-        }
-
         if (_simulatedGame.value != null && _simulatedGame.value != packageName) {
             manualOverrideActive = false
         }
@@ -353,7 +348,20 @@ class GameSessionManager(
             
             addLog("INFO", "Monitor", "Perfil: mapper=$isMapper, ext=$externalConnected, boostActivo=${_isBoostActive.value}")
 
-            if (isMapper || externalConnected) {
+            // ¿Hay un perfil manual recordado (persistido) para este juego, o una
+            // preferencia manual en memoria? Si sí, reaplicarlo y NO pisarlo con la
+            // auto-detección.
+            val rememberedManual = PreferenceManager.getLastManualProfile(context, packageName)
+                ?: PreferenceManager.getLastManualProfile(context, "")
+            if (rememberedManual != null || manualOverrideActive) {
+                val profileToApply = rememberedManual ?: currentProfileId ?: "extreme"
+                addLog("INFO", "Monitor", "▶️ Reaplicando perfil manual recordado: $profileToApply")
+                setActiveProfile(profileToApply, isManual = true)
+                if (!_isBoostActive.value) {
+                    delay(500)
+                    toggleBoost()
+                }
+            } else if (isMapper || externalConnected) {
                 // Dispositivo externo o mapper → FF MOUSE DUO siempre
                 addLog("INFO", "Monitor", "▶️ Aplicando perfil FF Mouse Duo")
                 setActiveProfile("ff_mouse", isManual = false)
@@ -456,17 +464,10 @@ class GameSessionManager(
                 if (oldGame != null || _fsmState.value == FsmState.GAME_ACTIVE) {
                     _simulatedGame.value = null
                     _fsmState.value = FsmState.READY
-                    if (manualOverrideActive) {
-                        // El usuario eligió un perfil manual: respetarlo. Solo
-                        // limpiamos la flag para que la auto-detección funcione en
-                        // el próximo juego, pero NO apagamos boost ni restauramos
-                        // tweaks ni bajamos a balanced.
-                        manualOverrideActive = false
-                        return@launch
-                    }
-                    manualOverrideActive = false
-                    addLog("INFO", "Monitor", "Salida de juego confirmada ($oldGame)")
 
+                    // SIEMPRE apagar boost / power mode real al salir del juego,
+                    // tenga o no un perfil manual activo.
+                    addLog("INFO", "Monitor", "Salida de juego confirmada ($oldGame)")
                     executePrivilegedCommands(
                         listOf(
                             "cmd power set-fixed-performance-mode-enabled false",
@@ -475,29 +476,41 @@ class GameSessionManager(
                         ),
                         tag = "Restore"
                     )
-
                     if (oldGame != null) disableGameMode(oldGame)
-
                     networkOptimizer.restore()
                     systemTweaks.restore()
-
-                    // ─── Perfil post-salida ───────────────────────
-                    // Si aún hay dispositivos externos conectados (ggmouse, teclado,
-                    // mapeador, etc.), mantener FF MOUSE DUO en lugar de ir a BALANCED.
-                    // Así si el usuario solo abrió una notificación rápido, no pierde
-                    // la configuración de mouse.
-                    val externalStillConnected = checkExternalDevicesNow()
-                    if (externalStillConnected) {
-                        addLog("INFO", "Monitor", "Dispositivos externos siguen conectados. Manteniendo FF MOUSE DUO.")
-                        // No cambiar perfil, queda ff_mouse si estaba en eso
-                    } else {
-                        if (!manualOverrideActive) {
-                            setActiveProfile("balanced", isManual = false)
-                        }
-                    }
-
                     if (_isMobiladorActive.value) toggleMobilador()
                     ramManager.clean()
+
+                    // A. Sincronizar estado en-app: apagar boost para que el overlay
+                    // (boost observer) se oculte y la notificación pase a estado neutral.
+                    // El apagado real de power mode ya corrió arriba.
+                    if (_isBoostActive.value) {
+                        _isBoostActive.value = false
+                        PreferenceManager.setServiceRunning(context, false)
+                        touchOptimizer.restore()
+                        addLog("INFO", "Monitor", "Boost en-app apagado (overlay oculto)")
+                    }
+
+                    // Recordar el perfil manual elegido para reaplicarlo la próxima vez
+                    // que se abra este juego (persistencia, no el boost prendido como
+                    // mecanismo de "memoria").
+                    if (manualOverrideActive) {
+                        val pkg = oldGame
+                        val profId = currentProfileId
+                        if (pkg != null && profId != null) {
+                            PreferenceManager.setLastManualProfile(context, pkg, profId)
+                            addLog("INFO", "Monitor", "Perfil manual '$profId' recordado para $pkg")
+                        }
+                        currentProfileId = null
+                    }
+
+                    // B1. Notificación neutral ("Optimizer Service Running") vía el boost
+                    // observer cuando isBoostActive=false. No aplicamos ningún perfil al
+                    // salir: el perfil recordado persiste en SharedPreferences para
+                    // reaplicarse solo al reabrir el juego.
+
+                    manualOverrideActive = false
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -511,6 +524,11 @@ class GameSessionManager(
         if (isManual) {
             hysteresisJob.getAndSet(null)?.cancel()
             manualOverrideActive = true
+            currentProfileId = id
+            // Recordar el perfil manual para el juego actual si hay uno activo;
+            // si no, guardarlo como preferencia global para reaplicar al próximo juego.
+            val pkg = _simulatedGame.value ?: ""
+            PreferenceManager.setLastManualProfile(context, pkg, id)
         }
 
         scope.launch {

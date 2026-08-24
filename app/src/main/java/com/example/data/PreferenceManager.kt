@@ -150,4 +150,24 @@ object PreferenceManager {
     fun setPrefBoolean(context: Context, key: String, value: Boolean) {
         getPreferences(context).edit().putBoolean(key, value).apply()
     }
+
+    // ─── Perfil manual recordado por juego (para reaplicar al reabrir) ──
+
+    private const val KEY_LAST_MANUAL_PROFILE_PREFIX = "last_manual_profile_"
+
+    fun setLastManualProfile(context: Context, packageName: String, profileId: String) {
+        getPreferences(context).edit()
+            .putString(KEY_LAST_MANUAL_PROFILE_PREFIX + packageName, profileId)
+            .apply()
+    }
+
+    fun getLastManualProfile(context: Context, packageName: String): String? {
+        return getPreferences(context).getString(KEY_LAST_MANUAL_PROFILE_PREFIX + packageName, null)
+    }
+
+    fun clearLastManualProfile(context: Context, packageName: String) {
+        getPreferences(context).edit()
+            .remove(KEY_LAST_MANUAL_PROFILE_PREFIX + packageName)
+            .apply()
+    }
 }
