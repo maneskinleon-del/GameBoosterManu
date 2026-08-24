@@ -304,16 +304,11 @@ class GameSessionManager(
         val isMapper = packageName.contains("gg.mouse") ||
                 packageName.contains("vphone") ||
                 packageName.contains("scrcpy") ||
-                packageName.contains("hud") ||
-                packageName.contains("mapper") ||
-                packageName.contains("assistant") ||
-                packageName.contains("control") ||
                 packageName.contains("flydigi") ||
                 packageName.contains("gamesir") ||
                 packageName.contains("mantis") ||
                 packageName.contains("panda") ||
-                packageName.contains("gamewolf") ||
-                packageName.contains("shizuku")
+                packageName.contains("gamewolf")
 
         val gameName = _gamesCache[packageName]
         val knownTencentGames = setOf(

@@ -275,25 +275,17 @@ class SystemMonitor(private val context: Context) {
     private suspend fun checkExternalDevices(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val command = "dumpsys input | grep -i -E 'keyboard|mouse|scrcpy|mapper|ggmouse|uinput|virtual|uhid|gamepad' | head -n 50"
+                val command = "dumpsys input | grep -i -E 'keyboard|mouse|ggmouse|external' | head -n 50"
                 val result = ShizukuExecutor.runCommand(command)
                 val output = result.getOrNull()?.lowercase() ?: ""
 
-                val hasInputDevice = output.contains("external: true") ||
-                        output.contains("usb") ||
-                        output.contains("bluetooth") ||
-                        output.contains("scrcpy") ||
-                        output.contains("ggmouse") ||
-                        output.contains("flydigi") ||
-                        output.contains("gamesir") ||
-                        output.contains("mantis") ||
-                        output.contains("panda") ||
-                        output.contains("gamewolf") ||
-                        output.contains("uinput") ||
-                        output.contains("virtual") ||
-                        output.contains("uhid") ||
-                        output.contains("mapper") ||
-                        output.contains("gamepad")
+            val hasInputDevice = output.contains("external: true") ||
+                    output.contains("ggmouse") ||
+                    output.contains("flydigi") ||
+                    output.contains("gamesir") ||
+                    output.contains("mantis") ||
+                    output.contains("panda") ||
+                    output.contains("gamewolf")
 
                 if (hasInputDevice) return@withContext true
 
@@ -301,17 +293,15 @@ class SystemMonitor(private val context: Context) {
                 val psCheck = ShizukuExecutor.runCommand("ps -A")
                 val psOutput = psCheck.getOrNull()?.lowercase() ?: ""
 
-                val hasProcess = psOutput.contains("gg.mouse") ||
-                        psOutput.contains("vphone") ||
-                        psOutput.contains("scrcpy") ||
-                        psOutput.contains("mapper") ||
-                        psOutput.contains("flydigi") ||
-                        psOutput.contains("gamesir") ||
-                        psOutput.contains("mantis") ||
-                        psOutput.contains("panda") ||
-                        psOutput.contains("gamewolf") ||
-                        psOutput.contains("hud") ||
-                        (psOutput.contains("app_process") && psOutput.contains("server.jar"))
+            val hasProcess = psOutput.contains("gg.mouse") ||
+                    psOutput.contains("vphone") ||
+                    psOutput.contains("flydigi") ||
+                    psOutput.contains("gamesir") ||
+                    psOutput.contains("mantis") ||
+                    psOutput.contains("panda") ||
+                    psOutput.contains("gamewolf") ||
+                    psOutput.contains("hud") ||
+                    (psOutput.contains("app_process") && psOutput.contains("server.jar"))
 
                 if (hasProcess) return@withContext true
 
@@ -321,11 +311,10 @@ class SystemMonitor(private val context: Context) {
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
                 )?.lowercase() ?: ""
 
-                enabledServices.contains("gg.mouse") ||
-                        enabledServices.contains("mapper") ||
-                        enabledServices.contains("flydigi") ||
-                        enabledServices.contains("mantis") ||
-                        enabledServices.contains("panda")
+            enabledServices.contains("gg.mouse") ||
+                    enabledServices.contains("flydigi") ||
+                    enabledServices.contains("mantis") ||
+                    enabledServices.contains("panda")
             } catch (_: Exception) {
                 false
             }
