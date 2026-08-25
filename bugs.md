@@ -28,6 +28,11 @@
 | **26** | DNS no se aplicaba (escaping bug en RESTORE_COMMANDS) | 🟡 Medio | ✅ CORREGIDO | `NetworkOptimizer.kt` |
 | **27** | Optimizaciones de red no se aplicaban al cambiar de perfil | 🟡 Medio | ✅ CORREGIDO | `GameSessionManager.kt` |
 | **28** | Indicador de perfil activo poco distintivo | 🟢 Bajo | ✅ CORREGIDO | `MainActivity.kt` |
+| **29** | Boost queda activo al cerrar juego con perfil manual | 🔴 Crítico | ✅ CORREGIDO | `GameSessionManager.kt` |
+| **30** | Perfil manual no se reaplica al reabrir juego | 🔴 Crítico | ✅ CORREGIDO | `GameSessionManager.kt`, `PreferenceManager.kt` |
+| **31** | Notificación sin contexto al ocultar overlay | 🟡 Medio | ✅ CORREGIDO | `GameBoostService.kt` |
+| **32** | Optimización de batería mata servicio en Xiaomi | 🔴 Crítico | ✅ CORREGIDO | `MainActivity.kt`, `AndroidManifest.xml` |
+| **33** | Init timeout insuficiente en dispositivos lentos (GameDetector nunca arranca) | 🔴 Crítico | ✅ CORREGIDO | `GameBoostRepository.kt` |
 
 ### Fixes previos (Julio 2026)
 

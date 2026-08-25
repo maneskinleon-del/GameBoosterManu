@@ -131,6 +131,7 @@ bash medir_rendimiento.sh
 - [SISTEMA_DE_MONITOREO.md](SISTEMA_DE_MONITOREO.md) — Sistema de métricas
 - [bugs.md](bugs.md) — Bug tracker (28 bugs documentados)
 - [SESION-2026-08-04.md](SESION-2026-08-04.md) — Sesión DNS + UI improvements
+- [SESION-2026-08-24.md](SESION-2026-08-24.md) — Sesión perfil manual, reapply, exit fix, batería
 
 ## ⚠️ Limitaciones conocidas
 
