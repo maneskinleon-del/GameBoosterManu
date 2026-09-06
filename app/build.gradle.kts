@@ -42,6 +42,11 @@ android {
         compose = true
         aidl = true
     }
+    testOptions {
+        // Tests JVM puros: android.util.Log → no-op en vez de "not mocked".
+        // (Los asserts de F4 usan el logger inyectado, no android.util.Log.)
+        unitTests.isReturnDefaultValues = true
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -75,6 +80,14 @@ dependencies {
     implementation(libs.shizuku.provider)
 
     testImplementation(libs.junit)
+    // Infra mínima para que la suite de tests compile (tests plantilla preexistentes
+    // las requerían y no estaban declaradas — F3B/Parte 9)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.ui.test.junit4)
+    // org.json real para tests JVM (el android.jar lo tiene stub — F3B/Parte 9)
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

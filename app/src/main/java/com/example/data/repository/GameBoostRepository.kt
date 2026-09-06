@@ -86,6 +86,27 @@ class GameBoostRepository private constructor(private val context: Context) {
     // Watchdog (depende de this)
     private val watchdogManager = WatchdogManager(context, this)
 
+    // F4: sesión de boost persistente (baseline + recovery tras process death)
+    val boostSession = com.example.manager.boostsession.BoostSessionManager(
+        store = com.example.manager.boostsession.BoostSessionStore.create(context),
+        runCommand = { cmd -> com.example.manager.ShizukuExecutor.runCommand(cmd) },
+        log = { level, tag, msg -> addLog(level, tag, msg) },
+        // Coherencia post-recovery: el boost murió con el proceso — is_running
+        // también debe morir (evita que el watchdog anti-LMK lo ressucite).
+        onRestored = { PreferenceManager.setServiceRunning(context, false) }
+    )
+
+    // F3B-Fix Issue 2: startup writers (ej. restoreSavedSettings del service)
+    // deben esperar a que el recovery del init termine antes de escribir
+    // settings del contrato F4 (pointer_speed incluida).
+    val recoveryGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** True si el recovery ya terminó (éxito o no). Los startup writers usan esto para no competir. */
+    fun isRecoveryComplete(): Boolean = recoveryGate.isCompleted
+
+    /** Espera (suspend) a que el recovery termine — para startup writers. */
+    suspend fun awaitRecoveryComplete() { recoveryGate.join() }
+
     // Dependency State Manager
     private val dependencyStateManager = DependencyStateManager(context)
     val dependencyState = dependencyStateManager.dependencyState
@@ -141,6 +162,14 @@ class GameBoostRepository private constructor(private val context: Context) {
     init {
         repositoryScope.launch {
             try {
+                // F4: recovery ANTES de cualquier apply/detector/monitor.
+                // Si el proceso murió con el boost activo, primero se restaura
+                // el baseline persistido; solo después continúa la inicialización.
+                val recovered = boostSession.recoverIfNeeded()
+                if (!recovered) {
+                    addLog("ERROR", "System", "Recovery incompleto tras process death — ver logs BoostSession")
+                }
+
                 withTimeout(initTimeoutMs) {
                     // 1. Inicializar GameSessionManager
                     sessionManager.initialize()
@@ -210,6 +239,12 @@ class GameBoostRepository private constructor(private val context: Context) {
                 addLog("WARN", "System", "Init timed out. Forcing READY.")
             } catch (e: Exception) {
                 addLog("WARN", "System", "Init error: ${e.message}. Forcing READY.")
+            } finally {
+                // F3B-Fix Issue 2: el gate SIEMPRE se abre al terminar el init
+                // (éxito, timeout o error) — los startup writers nunca quedan
+                // bloqueados indefinidamente. El recovery ya corrió (o falló
+                // y quedó RECOVERY_REQUIRED persistido para el próximo arranque).
+                recoveryGate.complete(Unit)
             }
         }
     }

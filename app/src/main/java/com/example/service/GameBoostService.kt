@@ -109,6 +109,19 @@ class GameBoostService : Service() {
     
     private fun handleStart() {
         Log.d(TAG, "Service started")
+        // F4: si hay un recovery pendiente (residuos de una muerte previa), NO
+        // re-aplicar perfiles — el observador de profilesFlow re-boostearía el
+        // dispositivo y pisaría el baseline. La reaplicación solo es válida con
+        // la sesión limpia (IDLE).
+        try {
+            val repo = com.example.data.repository.GameBoostRepository.getInstance(this)
+            if (repo.boostSession.currentState() != com.example.manager.boostsession.BoostSessionState.IDLE) {
+                Log.w(TAG, "handleStart: recovery pendiente (${repo.boostSession.currentState()}) — skip re-apply de perfil")
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "handleStart: no se pudo verificar sesión de boost: ${e.message}")
+        }
         ProfileManager.init(this)
         currentProfile = ProfileManager.getCurrentProfile()
         ProfileManager.applyProfile(currentProfile)
@@ -130,6 +143,15 @@ class GameBoostService : Service() {
 
     private fun restoreSavedSettings() {
         serviceScope.launch {
+            // F3B-Fix Issue 2: NO competir con el recovery del arranque. Este
+            // writer toca pointer_speed (key del contrato F4); si el recovery
+            // está resolviendo el baseline, esperar a que termine.
+            try {
+                val repo = com.example.data.repository.GameBoostRepository.getInstance(this@GameBoostService)
+                repo.awaitRecoveryComplete()
+            } catch (e: Exception) {
+                Log.w(TAG, "restoreSavedSettings: no se pudo consultar recovery gate: ${e.message}")
+            }
             val savedDpi = PreferenceManager.getDpi(this@GameBoostService)
             if (savedDpi != -1) {
                 val clampedDpi = savedDpi.coerceAtMost(PreferenceManager.MAX_DPI)
@@ -199,14 +221,23 @@ class GameBoostService : Service() {
                                 "balanced" -> ProfileManager.ProfileType.BALANCED
                                 "battery_saver" -> ProfileManager.ProfileType.POWER_SAVE
                                 else -> {
-                                    ProfileManager.ProfileType.entries.find { 
+                                    ProfileManager.ProfileType.entries.find {
                                         it.displayName.contains(entity.name, true) ||
                                         entity.name.contains(it.name, true)
                                     }
                                 }
                             }
-                            
-                            type?.let { 
+
+                            // F4: durante un recovery pendiente/curso, la re-aplicación
+                            // del perfil persistido pisaría el baseline que el recovery
+                            // está restaurando. Solo re-aplicar con sesión limpia.
+                            val sessionState = repository.boostSession.currentState()
+                            if (sessionState != com.example.manager.boostsession.BoostSessionState.IDLE) {
+                                Log.d(TAG, "Profile observer: skip re-apply (session=$sessionState)")
+                                return@collect
+                            }
+
+                            type?.let {
                                 if (currentProfile != it) {
                                     Log.d(TAG, "Service: Profile changed to ${it.displayName}")
                                     currentProfile = it

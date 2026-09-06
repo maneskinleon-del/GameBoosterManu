@@ -90,6 +90,14 @@ class GameSessionManager(
     // Callbacks para comunicación hacia afuera
     var onProfileApplied: ((ProfileManager.ProfileType) -> Unit)? = null
 
+    // F4: sesión persistente (captura baseline antes del primer apply; restore verificado)
+    private val boostSession: com.example.manager.boostsession.BoostSessionManager =
+        com.example.manager.boostsession.BoostSessionManager(
+            store = com.example.manager.boostsession.BoostSessionStore.create(context),
+            runCommand = { cmd -> ShizukuExecutor.runCommand(cmd) },
+            log = { level, tag, msg -> addLog(level, tag, msg) }
+        )
+
     // Para acceder al FloatingPanelManager desde el service
     var floatingPanelManager: FloatingPanelManager? = null
 
@@ -169,8 +177,26 @@ class GameSessionManager(
 
         if (newState) {
             Log.d(TAG, "Activating boost...")
+            // F4: capturar (o reutilizar) baseline y persistir APPLYING ANTES de que
+            // cualquier optimizer escriba en el sistema. Si el commit falla, no se
+            // aplica el boost: sin baseline persistido no hay recovery posible.
+            val sessionOk = kotlinx.coroutines.runBlocking { boostSession.beginApply() }
+            if (!sessionOk) {
+                addLog("ERROR", "Optimizer", "No se pudo persistir el baseline — boost CANCELADO")
+                _isBoostActive.value = false
+                PreferenceManager.setServiceRunning(context, false)
+                return
+            }
             ensureBoostServiceRunning()
             applyBoostSettings()
+            kotlinx.coroutines.runBlocking { } // (no-op: los writers corren en sus propios scopes; markActive abajo)
+            // Los optimizers lanzan sus writes en scopes propios; el estado pasa a
+            // ACTIVE tras el arranque del boost. Si el proceso muere entre medio,
+            // el estado persistido queda APPLYING → recovery al próximo arranque.
+            scope.launch {
+                delay(8000) // margen para que los writers asíncronos (5s/2s) completen
+                boostSession.markActive()
+            }
         } else {
             Log.d(TAG, "Deactivating boost...")
             restoreSettings()
@@ -250,6 +276,15 @@ class GameSessionManager(
     }
 
     private fun restoreSettings() {
+        // F4: restore verificado desde el baseline persistido (fuente de verdad).
+        // Los restores RAM internos de los optimizers se conservan como capa 2;
+        // este camino cubre las 43 keys auditadas (incluidas las 12 sin restore previo).
+        scope.launch {
+            val report = boostSession.restoreVerified()
+            if (!report.allOk) {
+                addLog("ERROR", "Optimizer", "Restore verificado con fallos (${report.results.values.count { it == com.example.manager.boostsession.RestoreResult.RESTORE_FAILED }}) — quedará RECOVERY_REQUIRED")
+            }
+        }
         touchOptimizer.restore()
         networkOptimizer.restore()
         systemTweaks.restore()
@@ -477,6 +512,9 @@ class GameSessionManager(
                         tag = "Restore"
                     )
                     if (oldGame != null) disableGameMode(oldGame)
+                    // F4: restore verificado del baseline persistido (reemplaza la
+                    // dependencia de backups RAM para las 43 keys auditadas)
+                    boostSession.restoreVerified()
                     networkOptimizer.restore()
                     systemTweaks.restore()
                     if (_isMobiladorActive.value) toggleMobilador()

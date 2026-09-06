@@ -13,6 +13,11 @@ ksp = "2.0.0-1.0.21"
 shizuku = "13.1.5"
 appcompat = "1.6.1"
 cardview = "1.0.0"
+robolectric = "4.13"
+roborazzi = "1.26.0"
+androidxTestCore = "1.5.0"
+uiTestJunit4 = "1.6.8"
+json = "20240303"
 
 [libraries]
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
@@ -40,6 +45,11 @@ room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
 shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+roborazzi = { group = "io.github.takahirom.roborazzi", name = "roborazzi", version.ref = "roborazzi" }
+androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
+ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4", version.ref = "uiTestJunit4" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
