@@ -18,7 +18,7 @@
 ## ✨ Características
 
 - **5 perfiles de rendimiento:** EXTREME, FF MOUSE, GAMING, BALANCED, POWER SAVE
-- **Detección automática** de juegos en ejecución vía AccessibilityService
+- **Detección automática** de juegos en primer plano vía `GameDetector` (UsageStatsManager) + `UnifiedAccessibilityService` (suplementario para apps estándar; no genera eventos para juegos nativos como Free Fire que usan renderizado propio)
 - **Optimización por Shizuku/rish** — comandos privilegiados sin root
 - **Panel flotante** con métricas en tiempo real (CPU, RAM, FPS, temperatura)
 - **Watchdog anti-LMK** — el servicio se reinicia automáticamente si Android lo mata
@@ -122,6 +122,7 @@ bash medir_rendimiento.sh
 | Shizuku | Comandos privilegiados |
 | Lifecycle | StateFlow + ViewModel |
 | Coroutines | Operaciones async |
+| AccessibilityService | Detección foreground suplementaria (no funciona con juegos nativos) |
 
 ## 📝 Documentación
 
@@ -139,6 +140,7 @@ bash medir_rendimiento.sh
 - Lectura de `thermal_zone` puede no funcionar sin permisos
 - `renice` y `taskset` requieren Shizuku activo
 - Android 13+ hace batching de AlarmManager (~7 min para Doze)
+- **AccessibilityService no detecta juegos nativos** (Free Fire, PUBG, etc.) — motor de renderizado propio no genera `TYPE_WINDOW_STATE_CHANGED`; la detección primaria es via `GameDetector` (UsageStatsManager polling). El monitoreo del botón ADS (Free Fire) requiere que el juego exponga la UI como View hierarchy estándar, lo cual no ocurre con motores nativos (OpenGL/Vulkan)
 
 ## 🔑 Shizuku: situación y requisito crítico
 
