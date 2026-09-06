@@ -8,6 +8,8 @@ import com.example.data.database.AppDatabase
 import com.example.data.database.LogEntity
 import com.example.data.database.ProfileEntity
 import com.example.data.repository.FsmState
+import com.example.manager.exec.ExecOutcome
+import com.example.manager.exec.ExecResult
 import com.example.service.GameBoostService
 import com.example.ui.FloatingPanelManager
 import kotlinx.coroutines.*
@@ -669,24 +671,53 @@ class GameSessionManager(
 
     // ─── Comandos Privilegiados ───────────────────────────────────
 
-    suspend fun executePrivilegedCommands(commands: List<String>, tag: String = "Exec") {
-        var successCount = 0
-        var failCount = 0
+    /**
+     * Ejecuta una lista de comandos privilegiados y devuelve un resultado estructurado
+     * por cada uno. F1-CP1: reemplaza el fire-and-forget Unit por [ExecResult].
+     *
+     * Regla: exit 0 != "aplicado". El resultado distingue [ExecOutcome.EXECUTED]
+     * (corrió pero sin verificación) de verificación real (read-back, CP4).
+     */
+    suspend fun executePrivilegedCommands(
+        commands: List<String>,
+        tag: String = "Exec"
+    ): List<ExecResult> {
+        val results = mutableListOf<ExecResult>()
 
         for (cmd in commands) {
             // Skip governor commands if kernel blocks writes (ZTE, Xiaomi, etc.)
             if (cmd.contains("scaling_governor") && !isGovernorWritable()) {
                 addLog("DEBUG", tag, "Governor bloqueado por kernel — skip")
+                results += ExecResult(
+                    outcome = ExecOutcome.EXECUTED("skipped-governor"),
+                    command = cmd
+                )
                 continue
             }
 
             val res = ShizukuExecutor.runCommand(cmd)
             if (res.isSuccess) {
-                successCount++
+                results += ExecResult(
+                    outcome = ExecOutcome.EXECUTED(res.getOrNull()?.trim() ?: ""),
+                    command = cmd
+                )
             } else {
-                val fallbackOk = trySettingsApiFallback(cmd)
-                if (fallbackOk) successCount++ else {
-                    failCount++
+                // Intentar fallback vía Settings API in-process (solo para "settings put")
+                val fallbackOutcome = trySettingsApiOutcome(cmd)
+                if (fallbackOutcome != null) {
+                    results += ExecResult(outcome = fallbackOutcome, command = cmd)
+                } else {
+                    // No se pudo ejecutar el comando
+                    val errMsg = res.exceptionOrNull()?.message
+                    val outcome = if (ShizukuExecutor.isReady().not()) {
+                        ExecOutcome.PRIVILEGE_UNAVAILABLE(errMsg)
+                    } else {
+                        ExecOutcome.EXIT_NONZERO(
+                            exit = -1,
+                            stderr = errMsg
+                        )
+                    }
+                    results += ExecResult(outcome = outcome, command = cmd)
                     val friendlyMsg = when {
                         cmd.contains("scaling_governor") -> "Governor no escribible (SELinux/Kernel bloquea)"
                         cmd.contains("renice") || cmd.contains("taskset") -> "Permisos insuficientes para $cmd"
@@ -696,9 +727,12 @@ class GameSessionManager(
                 }
             }
         }
+
+        val failCount = results.count { it.isFailure }
         if (failCount > 0) {
-            addLog("DEBUG", tag, "Comandos: $successCount OK, $failCount fallos")
+            addLog("DEBUG", tag, "Comandos: ${results.size - failCount} OK, $failCount fallos")
         }
+        return results
     }
 
     /**
@@ -746,6 +780,53 @@ class GameSessionManager(
             true
         } catch (_: Exception) {
             false
+        }
+    }
+
+    /**
+     * Variante de [trySettingsApiFallback] que devuelve un [ExecOutcome]
+     * en lugar de Boolean. F1-CP1: expone el resultado del fallback in-process.
+     *
+     * Un settings put in-process es exit 0 sin shell; NO hay stderr ni exit code.
+     * Se clasifica como EXECUTED (efecto no verificado aún — CP4 añade read-back).
+     * Si el write lanza excepción → null (no aplicado, caller maneja).
+     */
+    private fun trySettingsApiOutcome(cmd: String): ExecOutcome? {
+        val regex = """^settings\s+(put)\s+(system|global|secure)\s+(\S+)\s+(\S+)$""".toRegex()
+        val matchResult = regex.find(cmd.trim()) ?: return null
+        val (_, scope, key, rawValue) = matchResult.groupValues
+
+        return try {
+            when (scope) {
+                "system" -> {
+                    val intValue = rawValue.toIntOrNull()
+                    if (intValue != null)
+                        android.provider.Settings.System.putInt(context.contentResolver, key, intValue)
+                    else {
+                        val floatValue = rawValue.toFloatOrNull()
+                        if (floatValue != null)
+                            android.provider.Settings.System.putFloat(context.contentResolver, key, floatValue)
+                        else android.provider.Settings.System.putString(context.contentResolver, key, rawValue)
+                    }
+                }
+                "global" -> {
+                    val intValue = rawValue.toIntOrNull()
+                    if (intValue != null)
+                        android.provider.Settings.Global.putInt(context.contentResolver, key, intValue)
+                    else android.provider.Settings.Global.putString(context.contentResolver, key, rawValue)
+                }
+                "secure" -> {
+                    val intValue = rawValue.toIntOrNull()
+                    if (intValue != null)
+                        android.provider.Settings.Secure.putInt(context.contentResolver, key, intValue)
+                    else android.provider.Settings.Secure.putString(context.contentResolver, key, rawValue)
+                }
+                else -> return null
+            }
+            // Settings API write succeeded in-process (no shell) — exit 0 equivalente
+            ExecOutcome.EXECUTED("settings-api-fallback")
+        } catch (_: Exception) {
+            null
         }
     }
 
