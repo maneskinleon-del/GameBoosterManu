@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
 object ShizukuExecutor {
     private const val TAG = "ShizukuExecutor"
     private const val REQUEST_CODE = 1001
+    private const val POLL_INTERVAL_MS = 25L
     const val DEFAULT_TIMEOUT_MS = ExecutorDefaults.DEFAULT_TIMEOUT_MS
 
 
@@ -185,16 +186,40 @@ object ShizukuExecutor {
     }
 
     /**
-     * Espera acotada. Si waitFor(timeout, unit) lanza, NO cae a waitFor() infinito (regresión F2).
+     * Espera acotada. Si waitFor(timeout, unit) lanza (Shizuku 13.x RemoteProcess
+     * no soporta el overload), hace sondeo de exitValue() cada POLL_INTERVAL_MS
+     * hasta el deadline. NUNCA waitFor() sin límite (regresión F2).
      */
     private fun drainProcess(process: Process, timeoutMs: Long): Boolean {
-        val ok = try {
+        return try {
             process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (e: Exception) {
-            Log.w(TAG, "waitFor(timeout) no soportado: ${e.message}")
-            false
+            Log.w(TAG, "waitFor(timeout) no soportado (${e.message}); sondeando exitValue()")
+            pollUntilExited(process, timeoutMs)
         }
-        return ok
+    }
+
+    private fun pollUntilExited(process: Process, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            // Shizuku RemoteProcess lanza IllegalArgumentException (Binder: "process
+            // hasn't exited"), NO IllegalThreadStateException como un Process local.
+            // Cualquier excepción durante el sondeo = "aún no ha salido"; el deadline acota.
+            val exited = try {
+                process.exitValue()
+                true
+            } catch (_: Exception) {
+                false
+            }
+            if (exited) return true
+            try {
+                Thread.sleep(POLL_INTERVAL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        return false
     }
 
     private fun createShizukuProcess(command: String): Process {

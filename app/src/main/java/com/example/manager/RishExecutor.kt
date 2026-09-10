@@ -22,6 +22,7 @@ object RishExecutor {
     private const val TAG = "RishExecutor"
     private const val RISH_BINARY = "/data/local/tmp/rish"
     private const val DEFAULT_TIMEOUT_MS = ExecutorDefaults.DEFAULT_TIMEOUT_MS
+    private const val POLL_INTERVAL_MS = 25L
 
     private val applicationIdRef = AtomicReference("unknown")
 
@@ -116,8 +117,8 @@ object RishExecutor {
         val finished = try {
             process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (e: Exception) {
-            Log.w(TAG, "waitFor(timeout) no soportado: ${e.message}")
-            false
+            Log.w(TAG, "waitFor(timeout) no soportado (${e.message}); sondeando exitValue()")
+            pollUntilExited(process, timeoutMs)
         }
 
         if (!finished) {
@@ -172,5 +173,30 @@ object RishExecutor {
             State.Error -> sb.appendLine("Unknown error state")
         }
         return sb.toString()
+    }
+
+    /**
+     * Espera acotada vía sondeo: NUNCA waitFor() sin límite (regresión F2).
+     */
+    private fun pollUntilExited(process: Process, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            // Shizuku/Rish RemoteProcess lanza IllegalArgumentException (Binder), no
+            // IllegalThreadStateException. Cualquier excepción = "aún no ha salido".
+            val exited = try {
+                process.exitValue()
+                true
+            } catch (_: Exception) {
+                false
+            }
+            if (exited) return true
+            try {
+                Thread.sleep(POLL_INTERVAL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        return false
     }
 }
