@@ -96,7 +96,6 @@ class BoostSessionManagerTest {
         device.settings["global:auto_sync"] = "0"
         device.settings["global:window_animation_scale"] = "0"
         device.settings["global:activity_manager_constants"] = "max_cached_processes=128"
-        device.settings["system:touch_report_rate"] = "240"
         device.settings["global:wifi_low_latency_mode"] = "1"
     }
 
@@ -114,10 +113,10 @@ class BoostSessionManagerTest {
         val s1Id = store.load()!!.sessionId
 
         // Interleaving REAL de la race: el restore de S1 corre CONCURRENTEMENTE
-        // (como ocurre en producción: scope.launch separado, 44 gets vía Shizuku
+        // (como ocurre en producción: scope.launch separado, 34 gets vía Shizuku
         // que tardan 2-4s). Simulamos esa latencia con delayGetMs para garantizar
         // la ventana de interleaving de forma DETERMINISTA.
-        device.delayGetMs = 5 // 44 keys × 5ms ≈ 220ms de restore en vuelo
+        device.delayGetMs = 5 // 34 keys × 5ms ≈ 170ms de restore en vuelo
         val restoreScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
         val restoreJob = restoreScope.launch { mgr.restoreVerified() } // restore de S1 en vuelo
         // Esperar a que el restore tome su snapshot (S1) y pase a RESTORING
@@ -262,14 +261,14 @@ class BoostSessionManagerTest {
     fun `T5 absent keys use delete policy`() = runBlocking {
         seedRealisticDevice()
         assertTrue(mgr.beginApply())
-        // touch_report_rate estaba AUSENTE; el boost la crea con 240
-        device.settings["system:touch_report_rate"] = "240"
+        // wifi_low_latency_mode estaba AUSENTE; el boost la crea con 1 (NetworkOptimizer)
+        device.settings["global:wifi_low_latency_mode"] = "1"
         mgr.markActive()
 
         val mgrNew = mgr2()
         assertTrue(mgrNew.recoverIfNeeded())
         // ABSENT original → restaurar = delete
-        assertNull(device.settings["system:touch_report_rate"])
+        assertNull(device.settings["global:wifi_low_latency_mode"])
         assertEquals(BoostSessionState.IDLE, mgrNew.currentState())
     }
 
@@ -300,7 +299,6 @@ class BoostSessionManagerTest {
         assertEquals("1", device.settings["global:ble_scan_always_enabled"])
         assertEquals("1", device.settings["global:auto_sync"])
         assertEquals("cached_processes=32", device.settings["global:activity_manager_constants"])
-        assertNull(device.settings["system:touch_report_rate"])
         assertNull(device.settings["global:wifi_low_latency_mode"])
     }
 
@@ -315,7 +313,7 @@ class BoostSessionManagerTest {
         val report = mgr.restoreVerified()
         assertTrue(report.allOk)
         assertEquals("1", device.settings["global:ble_scan_always_enabled"])
-        assertNull(device.settings["system:touch_report_rate"])
+        assertNull(device.settings["global:wifi_low_latency_mode"])
     }
 
     @Test
@@ -354,5 +352,27 @@ class BoostSessionManagerTest {
         assertTrue(report.allOk)
         assertEquals(0, report.results.size)
         assertEquals(before, device.settings.toMap())
+    }
+
+    // ── Guarda de inventario: las 9 keys placebo muertas + private_dns_spec NO vuelven ──
+
+    @Test
+    fun `inventory excludes dead placebo keys and no-op private_dns_spec`() {
+        val dead = listOf(
+            "system:touch_sensitivity", "system:multi_touch_sensitivity",
+            "system:touch_latency_reduction", "system:high_touch_sensitivity_enable",
+            "system:high_touch_polling_rate_enable", "system:touch_report_rate",
+            "secure:touch_boost_enabled", "secure:swipe_up_to_switch_apps_enabled",
+            "secure:edge_prevent_mistouch_enabled", "global:private_dns_spec"
+        )
+        dead.forEach { id ->
+            val (ns, key) = id.split(":")
+            assertFalse("key muerta en inventario: $id", BoostKeys.all.contains(ns to key))
+            assertNull("appliedValueOf de key muerta debe ser null: $id", BoostKeys.appliedValueOf(ns, key))
+        }
+        // Claim INTERINO de min_refresh_rate = writer vigente GSM:518 (90.0), no el viejo 120.0
+        assertEquals("90.0", BoostKeys.appliedValueOf("system", "min_refresh_rate"))
+        // Inventario activo: 44 − 9 placebos − private_dns_spec = 34
+        assertEquals(34, BoostKeys.all.size)
     }
 }

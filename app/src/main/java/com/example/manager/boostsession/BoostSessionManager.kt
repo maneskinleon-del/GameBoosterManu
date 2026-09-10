@@ -6,12 +6,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Inventario de TODAS las settings keys que el boost de GameBoost modifica.
- * (Auditado en F3A/F3B — 43 entradas; cubre también las 12 keys que el código
- * actual nunca restaura: wifi_watchdog_on, wifi_scan_interval_ms, wifi_power_save,
- * wifi_low_latency_mode, touch_sensitivity, multi_touch_sensitivity,
- * high_touch_sensitivity_enable, high_touch_polling_rate_enable,
- * edge_prevent_mistouch_enabled, touch_report_rate, peak/min_refresh_rate.)
+ * Inventario de las settings keys que el boost de GameBoost modifica ACTIVAMENTE
+ * (writer vigente en producción). 34 entradas.
+ *
+ * Limpieza 2026-09-10 (auditoría appliedValueOf vs writers reales): se removieron
+ * 9 keys placebo muertas — touch_sensitivity, multi_touch_sensitivity,
+ * touch_latency_reduction, high_touch_sensitivity_enable,
+ * high_touch_polling_rate_enable, touch_report_rate, touch_boost_enabled,
+ * swipe_up_to_switch_apps_enabled, edge_prevent_mistouch_enabled (sin writer desde
+ * 424c806) — y la línea no-op private_dns_spec (put con valor vacío → usage error
+ * EXIT=255, nunca escribe; evidencia en experiments/forensic-phase1/
+ * F2F3F5-DEVICE-VERIFICATION-20260910.md).
+ *
+ * Migración de baselines viejos: el restore itera session.baseline del JSON
+ * persistido y NO consulta este inventario — las entradas viejas siguen
+ * restaurando por su originalValue; appliedValueOf de keys removidas → null
+ * degrada a Caso B (conflicto→conserva), nunca rompe el restore.
  */
 object BoostKeys {
 
@@ -41,7 +51,6 @@ object BoostKeys {
         // NetworkOptimizer.apply()
         "private_dns_mode",
         "private_dns_specifier",
-        "private_dns_spec",
         "wifi_watchdog_on",
         "wifi_scan_interval_ms",
         "wifi_power_save",
@@ -52,27 +61,18 @@ object BoostKeys {
     )
 
     private val systemKeys = listOf(
-        // TouchOptimizer.applyOptimization()
+        // TouchOptimizer.applyOptimization() (placebos OEM eliminados en 424c806)
         "pointer_speed",
-        "touch_sensitivity",
-        "multi_touch_sensitivity",
-        "touch_latency_reduction",
-        "high_touch_sensitivity_enable",
-        "high_touch_polling_rate_enable",
-        "touch_report_rate",
         // GameSessionManager.applyHighPriorityOptimizations() / ProfileManager
         "peak_refresh_rate",
         "min_refresh_rate"
     )
 
     private val secureKeys = listOf(
-        // TouchOptimizer.applyOptimization()
+        // TouchOptimizer.applyOptimization() (placebos OEM eliminados en 424c806)
         "long_press_timeout",
         "accessibility_display_magnification_enabled",
-        "accessibility_autoclick_enabled",
-        "touch_boost_enabled",
-        "swipe_up_to_switch_apps_enabled",
-        "edge_prevent_mistouch_enabled"
+        "accessibility_autoclick_enabled"
     )
 
     val all: List<Pair<String, String>> = // (namespace, key)
@@ -114,20 +114,23 @@ object BoostKeys {
         "wifi_low_latency_mode" -> "1"
         "wifi_bt_coexistence" -> "0"
         "zen_mode" -> "2"
-        "peak_refresh_rate", "min_refresh_rate" -> "120.0" // GameSessionManager:414-415 (writer fijo)
-        "touch_sensitivity" -> "100"
-        "multi_touch_sensitivity" -> "100"
-        "touch_latency_reduction" -> "1"
-        "high_touch_sensitivity_enable" -> "1"
-        "high_touch_polling_rate_enable" -> "1"
-        "touch_report_rate" -> "240"
+        // INTERINO (parche, no decisión de diseño): mismo defecto estructural que
+        // min_refresh_rate — el writer GSM:517 escribe literal 120.0, pero
+        // ProfileManager escribe $safeRefresh.0 dinámico a ambas keys; la tabla
+        // estática no puede ser consistentemente correcta. Reemplazo designado: #5
+        // (persistir valores realmente aplicados en la sesión y ELIMINAR esta tabla).
+        "peak_refresh_rate" -> "120.0"
+        // INTERINO (parche, no decisión de diseño): el writer GSM:518 escribe literal 90.0,
+        // pero ProfileManager escribe $safeRefresh.0 dinámico — la tabla estática no puede
+        // ser consistentemente correcta para esta key. "90.0" cubre la vía que corre hoy;
+        // la vía ProfileManager degrada a Caso B (conservador). PENDIENTE #5: persistir los
+        // valores realmente aplicados en la sesión y ELIMINAR esta tabla — el issue/PR de #5
+        // es el reemplazo designado de este claim.
+        "min_refresh_rate" -> "90.0"
         "long_press_timeout" -> "120"
         "accessibility_display_magnification_enabled" -> "0"
         "accessibility_autoclick_enabled" -> "0"
-        "touch_boost_enabled" -> "1"
-        "swipe_up_to_switch_apps_enabled" -> "0"
-        "edge_prevent_mistouch_enabled" -> "0"
-        else -> null // dinámicos: pointer_speed, dns_spec legacy, msaa condicional, anims variants
+        else -> null // dinámicos: pointer_speed, vía ProfileManager de refresh rates, anims variants
     }
 }
 
