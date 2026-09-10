@@ -30,9 +30,6 @@ object ShizukuExecutor {
     private const val REQUEST_CODE = 1001
     const val DEFAULT_TIMEOUT_MS = ExecutorDefaults.DEFAULT_TIMEOUT_MS
 
-    typealias CommandTimeoutException = com.example.manager.exec.CommandTimeoutException
-    typealias PrivilegeUnavailableException = com.example.manager.exec.PrivilegeUnavailableException
-    typealias CommandFailedException = com.example.manager.exec.CommandFailedException
 
     sealed class State {
         object NotInstalled : State()
