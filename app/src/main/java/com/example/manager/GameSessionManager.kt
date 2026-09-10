@@ -260,6 +260,23 @@ class GameSessionManager(
         }
     }
 
+    /**
+     * Backup RAM Mobilador (F4 por key).
+     * Cap.value == null → key ausente → settings delete.
+     * Cap outer null → read fail / muerte mid-ON → fallback AOSP documentado.
+     */
+    private data class SettingCap(val value: String?)
+
+    @Volatile private var mobiladorPointerCap: SettingCap? = null
+    @Volatile private var mobiladorLongPressCap: SettingCap? = null
+
+    private suspend fun captureSettingCap(ns: String, key: String): SettingCap? {
+        val result = ShizukuExecutor.runCommand("settings get $ns $key")
+        if (result.isFailure) return null
+        val raw = result.getOrNull()?.trim()
+        return SettingCap(if (raw.isNullOrBlank() || raw == "null") null else raw)
+    }
+
     fun toggleMobilador() {
         val newState = !_isMobiladorActive.value
         _isMobiladorActive.value = newState
@@ -267,12 +284,61 @@ class GameSessionManager(
 
         if (newState) {
             scope.launch {
-                val commands = listOf(
-                    "settings put system pointer_speed 7",
-                    "settings put system touch_report_rate 240",
-                    "settings put secure long_press_timeout 120"
+                if (mobiladorPointerCap == null) {
+                    mobiladorPointerCap = captureSettingCap("system", "pointer_speed")
+                }
+                if (mobiladorLongPressCap == null) {
+                    mobiladorLongPressCap = captureSettingCap("secure", "long_press_timeout")
+                }
+                executePrivilegedCommands(
+                    listOf(
+                        "settings put system pointer_speed 7",
+                        "settings put secure long_press_timeout 120"
+                    ),
+                    tag = "MobiladorOn"
                 )
-                executePrivilegedCommands(commands, tag = "MobiladorOn")
+            }
+        } else {
+            scope.launch {
+                val fallbackKeys = mutableListOf<String>()
+                fun buildRestore(
+                    cap: SettingCap?,
+                    ns: String,
+                    key: String,
+                    fallback: String
+                ): String = when {
+                    cap == null -> {
+                        fallbackKeys.add("$ns/$key")
+                        "settings put $ns $key $fallback"
+                    }
+                    cap.value == null -> "settings delete $ns $key"
+                    else -> "settings put $ns $key ${cap.value}"
+                }
+                val commands = listOf(
+                    buildRestore(mobiladorPointerCap, "system", "pointer_speed", "0"),
+                    buildRestore(
+                        mobiladorLongPressCap, "secure", "long_press_timeout", "400"
+                    )
+                )
+                val results = executePrivilegedCommands(commands, tag = "MobiladorOff")
+                val okCount = results.count { it.outcome is ExecOutcome.EXECUTED }
+                if (fallbackKeys.isNotEmpty()) {
+                    addLog(
+                        "WARN", "Mobilador",
+                        "Fallback AOSP (no medido en device) en: ${fallbackKeys.joinToString()} " +
+                            "— cap null por read fail o muerte mid-ON"
+                    )
+                }
+                if (okCount == commands.size) {
+                    addLog("INFO", "Mobilador", "Settings restaurados ($okCount/${commands.size})")
+                    mobiladorPointerCap = null
+                    mobiladorLongPressCap = null
+                } else {
+                    addLog(
+                        "ERROR", "Mobilador",
+                        "Restore parcial ($okCount/${commands.size}) — caps conservados para reintento"
+                    )
+                }
             }
         }
     }

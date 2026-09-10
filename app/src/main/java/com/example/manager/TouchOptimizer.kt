@@ -8,17 +8,24 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+/**
+ * TouchOptimizer — solo settings AOSP con efecto verificable.
+ *
+ * Backup alineado con F4 (BoostSession BackupEntry):
+ * - value presente → restore con `settings put`
+ * - key ausente (`settings get` → "null") → null en mapa → `settings delete`
+ * - restore comando-a-comando; mapa se conserva si hay fallo parcial
+ *
+ * PLACEBO eliminados: touch_latency_reduction, touch_boost_enabled, high_touch_*,
+ * touch_report_rate 240, touch_sensitivity genérico.
+ */
 class TouchOptimizer(private val context: Context) {
-    // ── FIX: SupervisorJob evita que excepciones en hijos no cancelen el scope ni crasheen la app ──
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val originalSettings = mutableMapOf<String, String>()
+
+    /** key "ns:name" → original; null value = key ausente al capturar */
+    private val originalSettings = mutableMapOf<String, String?>()
     private var isBackupDone = false
 
-    /**
-     * Aplica las optimizaciones táctiles basadas en el módulo Touch Pro.
-     * @param sensitivity Nivel de sensibilidad (1 a 10)
-     * @param isGamingMode Si es verdadero, aplica el "Touch Boost" experimental
-     */
     fun applyOptimization(sensitivity: Int, isGamingMode: Boolean = false) {
         scope.launch {
             if (!isBackupDone) {
@@ -26,42 +33,21 @@ class TouchOptimizer(private val context: Context) {
             }
 
             val commands = mutableListOf<String>()
-
-            // 1. Mapear sensibilidad (1-10) a pointer_speed (-7 a 7 en Android, pero usualmente 0-14 internamente)
-            // El script JS mapeaba a -3 a +4. Ajustamos para el estándar de Android.
-            val mappedPointerSpeed = ((sensitivity / 10.0) * 14).roundToInt() - 7
+            val mappedPointerSpeed =
+                ((sensitivity.coerceIn(1, 10) / 10.0) * 14).roundToInt() - 7
             commands.add("settings put system pointer_speed $mappedPointerSpeed")
 
-            // 2. Sensibilidad táctil genérica (específico de algunas ROMs)
-            val touchValue = ((sensitivity / 10.0) * 100).roundToInt()
-            commands.add("settings put system touch_sensitivity $touchValue")
-            commands.add("settings put system multi_touch_sensitivity $touchValue")
-
-            // 3. Reducción de latencia y Timeout de pulsación larga
             val longPress = if (isGamingMode) 120 else 300
             commands.add("settings put secure long_press_timeout $longPress")
-            
-            // 4. Desactivar filtros de accesibilidad que añaden lag
+
             commands.add("settings put secure accessibility_display_magnification_enabled 0")
             commands.add("settings put secure accessibility_autoclick_enabled 0")
 
-            // 5. Optimizaciones experimentales de latencia (Neon Core)
-            if (isGamingMode) {
-                commands.add("settings put system touch_latency_reduction 1")
-                commands.add("settings put secure touch_boost_enabled 1")
-                commands.add("settings put system high_touch_sensitivity_enable 1")
-                commands.add("settings put system high_touch_polling_rate_enable 1")
-                // Desactivar gestos de sistema que pueden interferir con el touch de juegos
-                commands.add("settings put secure swipe_up_to_switch_apps_enabled 0")
-                commands.add("settings put secure edge_prevent_mistouch_enabled 0")
+            // Un comando por key (no join ";") para no ocultar exit intermedios
+            for (cmd in commands) {
+                ShizukuExecutor.runCommand(cmd)
             }
-
-            // 6. Report Rate (Si el hardware lo soporta vía software settings)
-            commands.add("settings put system touch_report_rate 240")
-
-            val finalCommand = commands.joinToString("; ")
-            Log.d("TouchOptimizer", "Aplicando optimizaciones: $finalCommand")
-            ShizukuExecutor.runCommand(finalCommand)
+            Log.d("TouchOptimizer", "Aplicando (solo AOSP verificable): ${commands.size} cmds")
         }
     }
 
@@ -71,39 +57,64 @@ class TouchOptimizer(private val context: Context) {
             "secure:long_press_timeout",
             "secure:accessibility_display_magnification_enabled",
             "secure:accessibility_autoclick_enabled",
-            "secure:swipe_up_to_switch_apps_enabled",
         )
-
         keys.forEach { key ->
             val parts = key.split(":")
             val result = ShizukuExecutor.runCommand("settings get ${parts[0]} ${parts[1]}")
-            result.getOrNull()?.let { value ->
-                if (value != "null" && value.isNotBlank()) {
-                    originalSettings[key] = value.trim()
-                }
+            if (result.isFailure) {
+                Log.w("TouchOptimizer", "Backup read failed for $key — no se registra")
+                return@forEach
             }
+            val raw = result.getOrNull()?.trim()
+            originalSettings[key] = if (raw.isNullOrBlank() || raw == "null") null else raw
         }
         isBackupDone = true
-        Log.d("TouchOptimizer", "Backup completado: ${originalSettings.size} ajustes guardados")
+        val absent = originalSettings.count { it.value == null }
+        Log.d(
+            "TouchOptimizer",
+            "Backup: ${originalSettings.size} keys ($absent ausentes → delete en restore)"
+        )
     }
 
     fun restore() {
         scope.launch {
-            if (originalSettings.isEmpty()) return@launch
-
-            val commands = mutableListOf<String>()
-            originalSettings.forEach { (key, value) ->
-                val parts = key.split(":")
-                commands.add("settings put ${parts[0]} ${parts[1]} $value")
+            if (!isBackupDone || originalSettings.isEmpty()) {
+                Log.w(
+                    "TouchOptimizer",
+                    "Restore omitido: sin backup en RAM (usa BoostSessionManager post-muerte)"
+                )
+                return@launch
             }
-            
-            // Valores por defecto para los que no siempre tienen backup
-            commands.add("settings put system touch_latency_reduction 0")
-            commands.add("settings put secure touch_boost_enabled 0")
-            
-            val finalCommand = commands.joinToString("; ")
-            ShizukuExecutor.runCommand(finalCommand)
-            Log.d("TouchOptimizer", "Ajustes táctiles restaurados")
+            var ok = 0
+            var fail = 0
+            for ((key, value) in originalSettings) {
+                val parts = key.split(":")
+                val ns = parts[0]
+                val name = parts[1]
+                val cmd = if (value == null) {
+                    "settings delete $ns $name"
+                } else {
+                    "settings put $ns $name $value"
+                }
+                val result = ShizukuExecutor.runCommand(cmd)
+                if (result.isSuccess) ok++ else {
+                    fail++
+                    Log.e(
+                        "TouchOptimizer",
+                        "Restore falló ($key): ${result.exceptionOrNull()?.message}"
+                    )
+                }
+            }
+            if (fail == 0) {
+                Log.d("TouchOptimizer", "Ajustes táctiles restaurados ($ok ops)")
+                originalSettings.clear()
+                isBackupDone = false
+            } else {
+                Log.e(
+                    "TouchOptimizer",
+                    "Restore parcial ok=$ok fail=$fail — mapa conservado para reintento"
+                )
+            }
         }
     }
 }
