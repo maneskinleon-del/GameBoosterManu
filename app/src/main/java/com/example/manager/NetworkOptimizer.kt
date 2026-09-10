@@ -51,9 +51,6 @@ class NetworkOptimizer(
         "settings put global private_dns_mode hostname",
         "settings put global private_dns_specifier dns.google",
 
-        // Limpiar residual legacy (por si quedó de versiones anteriores)
-        "settings put global private_dns_spec ",
-
         "settings put global wifi_watchdog_on 0",
         "settings put global wifi_scan_interval_ms 300000", // 5 min
 
@@ -103,12 +100,18 @@ class NetworkOptimizer(
             val specifier = originalDnsSpecifier?.takeIf { it.isNotBlank() && it != "null" } ?: ""
             val wifiBt = originalWifiBtCoex?.takeIf { it.isNotBlank() && it != "null" } ?: "1"
 
-            val restoreCmds = listOf(
-                "settings put global private_dns_mode $mode",
-                "settings put global private_dns_specifier $specifier",
-                "settings put global private_dns_spec ", // limpiar legacy
-                "settings put global wifi_bt_coexistence $wifiBt",
+            // El specifier solo se escribe si el usuario tenía uno; si estaba
+            // ausente, se restaura la ausencia (un put con valor vacío produce
+            // un usage error, EXIT=255).
+            val restoreCmds = mutableListOf(
+                "settings put global private_dns_mode $mode"
             )
+            if (specifier.isNotBlank()) {
+                restoreCmds.add("settings put global private_dns_specifier $specifier")
+            } else {
+                restoreCmds.add("settings delete global private_dns_specifier")
+            }
+            restoreCmds.add("settings put global wifi_bt_coexistence $wifiBt")
 
             for (cmd in restoreCmds) {
                 ShizukuExecutor.runCommand(cmd)
