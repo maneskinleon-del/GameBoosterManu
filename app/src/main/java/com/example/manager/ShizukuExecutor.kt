@@ -208,6 +208,9 @@ object ShizukuExecutor {
             val exited = try {
                 process.exitValue()
                 true
+            } catch (e: android.os.DeadObjectException) {
+                Log.e(TAG, "Binder muerto durante sondeo — Shizuku probablemente cayó")
+                return false // falla ya: sondear el deadline completo contra un binder muerto no aporta nada
             } catch (_: Exception) {
                 false
             }
