@@ -19,7 +19,10 @@ import kotlin.math.roundToInt
  * PLACEBO eliminados: touch_latency_reduction, touch_boost_enabled, high_touch_*,
  * touch_report_rate 240, touch_sensitivity genérico.
  */
-class TouchOptimizer(private val context: Context) {
+class TouchOptimizer(
+    private val context: Context,
+    private val recordApplied: (namespace: String, key: String, value: String?) -> Unit = { _, _, _ -> }
+) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /** key "ns:name" → original; null value = key ausente al capturar */
@@ -45,7 +48,16 @@ class TouchOptimizer(private val context: Context) {
 
             // Un comando por key (no join ";") para no ocultar exit intermedios
             for (cmd in commands) {
-                ShizukuExecutor.runCommand(cmd)
+                val result = ShizukuExecutor.runCommand(cmd)
+                // #5 SSOT: grabar en la sesión persistida lo realmente aplicado
+                if (result.isSuccess) {
+                    val p = cmd.trim().split(Regex("\\s+"))
+                    if (p.size >= 5 && p[0] == "settings" && p[1] == "put") {
+                        recordApplied(p[2], p[3], p.drop(4).joinToString(" "))
+                    } else if (p.size == 4 && p[0] == "settings" && p[1] == "delete") {
+                        recordApplied(p[2], p[3], null)
+                    }
+                }
             }
             Log.d("TouchOptimizer", "Aplicando (solo AOSP verificable): ${commands.size} cmds")
         }
@@ -97,7 +109,14 @@ class TouchOptimizer(private val context: Context) {
                     "settings put $ns $name $value"
                 }
                 val result = ShizukuExecutor.runCommand(cmd)
-                if (result.isSuccess) ok++ else {
+                if (result.isSuccess) {
+                    // #5 SSOT: un delete restaura la ausencia — grabar valor aplicado null
+                    val p = cmd.trim().split(Regex("\\s+"))
+                    if (p.size == 4 && p[0] == "settings" && p[1] == "delete") {
+                        recordApplied(p[2], p[3], null)
+                    }
+                    ok++
+                } else {
                     fail++
                     Log.e(
                         "TouchOptimizer",

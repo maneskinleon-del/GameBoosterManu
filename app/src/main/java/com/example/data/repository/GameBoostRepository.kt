@@ -62,7 +62,12 @@ class GameBoostRepository private constructor(private val context: Context) {
     val gameDetector = GameDetector(context)
 
     // Managers externos (inyectados a GameSessionManager)
-    private val touchOptimizer = TouchOptimizer(context)
+    private val touchOptimizer = TouchOptimizer(context) { ns, key, value ->
+        // #5 SSOT: TouchOptimizer no pasa por el funnel de GSM → graba vía lambda.
+        // Acceso diferido: el lambda solo corre durante writes de boost, cuando
+        // boostSession ya está inicializado.
+        boostSession.recordApplied(ns, key, value)
+    }
     private val ramManager = RamManager(context, this)
     private val networkOptimizer = NetworkOptimizer(this)
     private val systemTweaks = SystemTweaks(this)

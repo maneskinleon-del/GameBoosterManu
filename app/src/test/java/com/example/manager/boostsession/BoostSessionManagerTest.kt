@@ -375,4 +375,89 @@ class BoostSessionManagerTest {
         // Inventario activo: 44 − 9 placebos − private_dns_spec = 34
         assertEquals(34, BoostKeys.all.size)
     }
+
+    // ── #5 SSOT: schema v2 + purge legacy + recorded-value precedence ──
+
+    private val storeFile get() = File(tmp.root, "boost_session.json")
+
+    @Test
+    fun `S1 legacy snapshot without schemaVersion is purged not migrated`() = runBlocking {
+        // Snapshot v1 (sin schemaVersion): estado ACTIVE con baseline — el caso
+        // exacto que re-aplicaba valores viejos al morir el proceso.
+        storeFile.writeText(
+            """{"state":"ACTIVE","sessionId":"bs_legacy","updatedAt":1,"baseline":[{"ns":"global","key":"auto_sync","original":"1","capturedAt":1,"sessionId":"bs_legacy"}]}"""
+        )
+        assertNull("v1 debe ser rechazado", store.load())
+        assertFalse("archivo legacy borrado", storeFile.exists())
+        assertTrue("evidencia preservada como .corrupt", File(tmp.root, "boost_session.json.corrupt").exists())
+        // Recovery sobre store purgado: sin residuos y SIN re-aplicar los valores
+        // del snapshot legacy (device nunca seeded → el valor legacy "1" NO debe aparecer)
+        assertTrue(mgr.recoverIfNeeded())
+        assertNull("el snapshot purgado no se re-aplica", device.settings["global:auto_sync"])
+    }
+
+    @Test
+    fun `S1b future schema version is also purged`() = runBlocking {
+        storeFile.writeText(
+            """{"schemaVersion":99,"state":"ACTIVE","sessionId":"x","updatedAt":1,"baseline":[]}"""
+        )
+        assertNull(store.load())
+        assertFalse(storeFile.exists())
+    }
+
+    @Test
+    fun `S2 restore recognizes dynamically applied refresh rate via recorded value`() = runBlocking {
+        seedRealisticDevice() // min_refresh_rate ausente → original = null (delete)
+        assertTrue(mgr.beginApply())
+        // Writer dinámico real: ProfileManager aplica 60.0 — la tabla estática dice 90.0
+        device.settings["system:min_refresh_rate"] = "60.0"
+        mgr.recordApplied("system", "min_refresh_rate", "60.0")
+        mgr.markActive()
+
+        val report = mgr.restoreVerified()
+        assertEquals(
+            com.example.manager.boostsession.RestoreResult.RESTORE_VERIFIED,
+            report.results["system:min_refresh_rate"]
+        )
+        assertNull("ausencia restaurada", device.settings["system:min_refresh_rate"])
+    }
+
+    @Test
+    fun `S3 falls back to static table when no recorded value`() = runBlocking {
+        seedRealisticDevice()
+        assertTrue(mgr.beginApply())
+        // Writer estático sin grabación (compatibilidad): appliedValueOf(wifi_low_latency_mode)="1"
+        device.settings["global:wifi_low_latency_mode"] = "1"
+        val report = mgr.restoreVerified()
+        assertEquals(
+            com.example.manager.boostsession.RestoreResult.RESTORE_VERIFIED,
+            report.results["global:wifi_low_latency_mode"]
+        )
+        assertNull(device.settings["global:wifi_low_latency_mode"])
+    }
+
+    @Test
+    fun `S4 recordApplied is no-op without active session or unknown key`() = runBlocking {
+        assertTrue(mgr.recoverIfNeeded()) // → IDLE, store vacío
+        mgr.recordApplied("global", "auto_sync", "0")
+        assertNull("no debe crear sesión", store.load())
+
+        // Sesión activa pero key fuera del baseline → no-op
+        assertTrue(mgr.beginApply())
+        val before = store.load()!!.baseline
+        mgr.recordApplied("system", "key_que_no_existe", "1")
+        assertEquals(before, store.load()!!.baseline)
+    }
+
+    @Test
+    fun `S5 schema v2 roundtrip preserves appliedValue`() = runBlocking {
+        seedRealisticDevice()
+        assertTrue(mgr.beginApply())
+        device.settings["system:min_refresh_rate"] = "60.0"
+        mgr.recordApplied("system", "min_refresh_rate", "60.0")
+        // Persistido en disco y releído (roundtrip real, no solo memoria)
+        val entry = store.load()!!.baseline.first { it.key == "min_refresh_rate" }
+        assertEquals("60.0", entry.appliedValue)
+        assertEquals(2, com.example.manager.boostsession.BoostSession.SCHEMA_VERSION)
+    }
 }
