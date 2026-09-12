@@ -171,7 +171,12 @@ class GameBoostService : Service() {
     
     private fun handleStop() {
         Log.d(TAG, "Service stopping")
-        ProfileManager.restoreDefaults()
+        // No forzar BALANCED al detener el servicio: el perfil activo lo gobierna
+        // GameSessionManager (Room como única autoridad). applyProfile(BALANCED) aquí
+        // era el autor estructural del síntoma "perfil → Balanced" (2026-09-12):
+        // cada OFF de boost pisaba el perfil —manual o auto— elegido por el usuario.
+        // Los settings del boost los restaura BoostSession.restoreVerified();
+        // el perfil se restaura cuando corresponda (re-entry de juego o usuario).
         isRunning = false
         PreferenceManager.setServiceRunning(this, false)
         stopForeground(true)
