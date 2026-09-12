@@ -242,29 +242,34 @@ class WatchdogManager(
         val currentProfile = profiles.find { it.isActive }
         val currentProfileId = currentProfile?.id ?: ""
 
+        // F5: sin lectura real (NaN) → no actuar
+        if (cpuTemp.isNaN()) return
+
         when {
-            // ⚠️ CRÍTICO: ≥ 55°C — forzar Battery Saver (antes era 50°C, subido para evitar disparos falsos)
+            // ≥55°C: solo capturar perfil original en el PRIMER disparo del episodio
             cpuTemp >= 55f -> {
                 repository.logAsync("ERROR", "Watchdog", "🔥 TEMPERATURA CRÍTICA: ${cpuTemp.toInt()}°C. Aplicando ahorro de energía.")
-                lastProfileBeforeThermal = currentProfileId
+                if (lastProfileBeforeThermal == null) {
+                    lastProfileBeforeThermal = currentProfileId
+                }
                 lastThermalActionTime = now
-                repository.setActiveProfile("battery_saver")
+                repository.setActiveProfile("battery_saver", isManual = false)
             }
-            // 🌡️ ALTA: ≥ 50°C — solo bajar si está en Extreme (antes era 45°C)
             cpuTemp >= 50f -> {
                 if (currentProfileId == "extreme") {
                     repository.logAsync("WARN", "Watchdog", "🌡️ Temperatura elevada: ${cpuTemp.toInt()}°C. Bajando perfil a BALANCED.")
-                    lastProfileBeforeThermal = currentProfileId
+                    if (lastProfileBeforeThermal == null) {
+                        lastProfileBeforeThermal = currentProfileId
+                    }
                     lastThermalActionTime = now
-                    repository.setActiveProfile("balanced")
+                    repository.setActiveProfile("balanced", isManual = false)
                 }
             }
-            // ✅ Normal: ≤ 40°C y hay un perfil anterior guardado → restaurar
             cpuTemp <= 40f && lastProfileBeforeThermal != null -> {
                 val restoreTo = lastProfileBeforeThermal ?: return
                 lastProfileBeforeThermal = null
                 repository.logAsync("INFO", "Watchdog", "✅ Temperatura normal (${cpuTemp.toInt()}°C). Restaurando perfil anterior: $restoreTo.")
-                repository.setActiveProfile(restoreTo)
+                repository.setActiveProfile(restoreTo, isManual = false)
             }
         }
     }

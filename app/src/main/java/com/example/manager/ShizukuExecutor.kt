@@ -3,25 +3,41 @@ package com.example.manager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
+import com.example.manager.exec.CommandFailedException
+import com.example.manager.exec.CommandTimeoutException
+import com.example.manager.exec.ExecutorDefaults
+import com.example.manager.exec.PrivilegeUnavailableException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.util.concurrent.TimeUnit
 
 /**
- * ShizukuExecutor optimizado siguiendo el modelo de ShizukuManager.
+ * ShizukuExecutor — pipeline privilegiado con timeouts (F2) y señales de error honestas (F3).
+ *
+ * - drain paralelo de stdout/stderr (evita deadlock de pipe 64KB)
+ * - waitFor(timeout); si el overload no existe → false + destroyForcibly (NUNCA waitFor() infinito)
+ * - Rish / Runtime como fallback; PRIVILEGE_UNAVAILABLE solo si ningún backend pudo lanzar
+ * - exit≠0 con backend vivo → CommandFailedException (no enmascarar como privilegio)
+ *
+ * TODO: migrar a UserService cuando Shizuku elimine newProcess.
  */
 object ShizukuExecutor {
     private const val TAG = "ShizukuExecutor"
     private const val REQUEST_CODE = 1001
+    private const val POLL_INTERVAL_MS = 25L
+    const val DEFAULT_TIMEOUT_MS = ExecutorDefaults.DEFAULT_TIMEOUT_MS
+
 
     sealed class State {
         object NotInstalled : State()
         object NotRunning : State()
         object PermissionDenied : State()
         object Ready : State()
-        
+
         override fun toString(): String = when (this) {
             NotInstalled -> "Not Installed (Pre-V11)"
             NotRunning -> "Not Running"
@@ -43,7 +59,7 @@ object ShizukuExecutor {
 
     private fun isShizukuAvailable(): Boolean = try {
         Shizuku.pingBinder()
-    } catch (e: Throwable) {
+    } catch (_: Throwable) {
         false
     }
 
@@ -54,12 +70,10 @@ object ShizukuExecutor {
             onResult(true)
             return
         }
-        
         permissionListener?.let { Shizuku.removeRequestPermissionResultListener(it) }
         val listener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
             if (requestCode == REQUEST_CODE) {
-                val granted = grantResult == PackageManager.PERMISSION_GRANTED
-                onResult(granted)
+                onResult(grantResult == PackageManager.PERMISSION_GRANTED)
                 permissionListener?.let { Shizuku.removeRequestPermissionResultListener(it) }
                 permissionListener = null
             }
@@ -69,74 +83,150 @@ object ShizukuExecutor {
         Shizuku.requestPermission(REQUEST_CODE)
     }
 
-    /**
-     * Ejecuta un comando shell via Shizuku, devolviendo un Result.
-     *
-     * Si Shizuku no está disponible, intenta automáticamente con:
-     *   1. Rish binary (/data/local/tmp/rish) — mismo uid 2000 que Shizuku
-     *   2. Runtime.exec() — sin privilegios, comando normal de app
-     *
-     * Esto hace que la app sea usable incluso sin Shizuku instalado/iniciado.
-     *
-     * Shizuku.newProcess() es una API interna (no pública) accesible solo por reflection.
-     * Está deprecada en favor de UserService, pero sigue presente en Shizuku v13.x.
-     *
-     * TODO: Migrar a UserService API cuando Shizuku elimine newProcess.
-     *   Ver: https://github.com/RikkaApps/Shizuku-API#userservice
-     */
     suspend fun runCommand(command: String): Result<String> = withContext(Dispatchers.IO) {
-        // 1. Intentar con Shizuku (máxima prioridad)
-        val state = checkState()
-        if (state == State.Ready) {
-            try {
-                val process = createShizukuProcess(command)
+        var lastFailure: Throwable? = null
 
-                val output = process.inputStream.bufferedReader().use { it.readText() }
-                val error = process.errorStream.bufferedReader().use { it.readText() }
-                process.waitFor()
-
-                if (process.exitValue() == 0) {
-                    Log.d(TAG, "✅ Shizuku OK: ${command.take(60)}")
-                    return@withContext Result.success(output.trim())
-                } else {
-                    val err = error.trim().ifBlank { "exit=${process.exitValue()}" }
-                    Log.w(TAG, "⚠️ Shizuku falló: $err. Intentando fallback...")
-                    // Fall through to fallback
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Excepción Shizuku: ${e.message}. Intentando fallback...")
-                // Fall through to fallback
+        // 1. Shizuku
+        if (checkState() == State.Ready) {
+            val shizukuResult = runOnProcess(command, "Shizuku") {
+                createShizukuProcess(command)
             }
+            if (shizukuResult.isSuccess) return@withContext shizukuResult
+            lastFailure = shizukuResult.exceptionOrNull()
+            // Timeout o fallo real del comando: no disfrazar de privilegio
+            if (lastFailure is CommandTimeoutException || lastFailure is CommandFailedException) {
+                return@withContext shizukuResult
+            }
+            Log.w(TAG, "Shizuku falló (${lastFailure?.message}). Intentando Rish...")
         }
 
-        // 2. Fallback: Rish (uid 2000, mismos privilegios que Shizuku)
+        // 2. Rish
         if (RishExecutor.isReady()) {
             val rishResult = RishExecutor.runCommand(command)
-            if (rishResult.isSuccess) {
-                Log.d(TAG, "✅ Rish fallback OK: ${command.take(60)}")
+            if (rishResult.isSuccess) return@withContext rishResult
+            lastFailure = rishResult.exceptionOrNull()
+            if (lastFailure is CommandTimeoutException || lastFailure is CommandFailedException) {
                 return@withContext rishResult
             }
-            Log.w(TAG, "⚠️ Rish fallback falló: ${rishResult.exceptionOrNull()?.message}")
+            Log.w(TAG, "Rish falló (${lastFailure?.message})")
         }
 
-        // 3. Fallback final: Runtime.exec() sin privilegios
-        Log.w(TAG, "⚠️ Usando Runtime.exec() como fallback final: ${command.take(60)}")
-        RishExecutor.runCommandFallback(command)
+        // 3. Runtime sin privilegios (último recurso)
+        val fallback = RishExecutor.runCommandFallback(command)
+        if (fallback.isSuccess) return@withContext fallback
+        lastFailure = fallback.exceptionOrNull() ?: lastFailure
+
+        val msg = "PRIVILEGE_UNAVAILABLE tras intentar backends: ${command.take(80)}"
+        Result.failure(PrivilegeUnavailableException(msg, lastFailure))
+    }
+
+    private suspend fun runOnProcess(
+        command: String,
+        label: String,
+        start: () -> Process
+    ): Result<String> = coroutineScope {
+        val process = try {
+            start()
+        } catch (e: Exception) {
+            return@coroutineScope Result.failure(e)
+        }
+
+        val stdoutDeferred = async(Dispatchers.IO) {
+            try {
+                process.inputStream.bufferedReader().use { it.readText() }
+            } catch (_: Exception) {
+                ""
+            }
+        }
+        val stderrDeferred = async(Dispatchers.IO) {
+            try {
+                process.errorStream.bufferedReader().use { it.readText() }
+            } catch (_: Exception) {
+                ""
+            }
+        }
+
+        val finished = drainProcess(process, DEFAULT_TIMEOUT_MS)
+        if (!finished) {
+            try {
+                process.destroyForcibly()
+            } catch (_: Exception) {
+            }
+            // Cancelar drains colgados
+            stdoutDeferred.cancel()
+            stderrDeferred.cancel()
+            Log.e(TAG, "TIMEOUT ${DEFAULT_TIMEOUT_MS}ms [$label]: ${command.take(60)}")
+            return@coroutineScope Result.failure(CommandTimeoutException(DEFAULT_TIMEOUT_MS))
+        }
+
+        val output = try {
+            stdoutDeferred.await()
+        } catch (_: Exception) {
+            ""
+        }
+        val error = try {
+            stderrDeferred.await()
+        } catch (_: Exception) {
+            ""
+        }
+
+        val exit = try {
+            process.exitValue()
+        } catch (_: Exception) {
+            -1
+        }
+        if (exit == 0) {
+            Log.d(TAG, "✅ $label OK: ${command.take(60)}")
+            Result.success(output.trim())
+        } else {
+            val err = error.trim().ifBlank { "exit=$exit" }
+            Log.w(TAG, "⚠️ $label exit≠0: $err")
+            Result.failure(CommandFailedException("$label: $err"))
+        }
     }
 
     /**
-     * Crea un proceso Shizuku para ejecutar un comando shell.
-     * Usa reflection sobre Shizuku.newProcess() (API interna en Shizuku v13.x).
-     *
-     * NOTA: newProcess está deprecado. Si una versión futura de Shizuku lo elimina,
-     * intentamos un fallback via Runtime.exec() para evitar que la app crashee.
-     *
-     * TODO: Migrar a UserService API cuando Shizuku elimine newProcess.
-     *   Ver: https://github.com/RikkaApps/Shizuku-API#userservice
+     * Espera acotada. Si waitFor(timeout, unit) lanza (Shizuku 13.x RemoteProcess
+     * no soporta el overload), hace sondeo de exitValue() cada POLL_INTERVAL_MS
+     * hasta el deadline. NUNCA waitFor() sin límite (regresión F2).
      */
+    private fun drainProcess(process: Process, timeoutMs: Long): Boolean {
+        return try {
+            process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {
+            Log.w(TAG, "waitFor(timeout) no soportado (${e.message}); sondeando exitValue()")
+            pollUntilExited(process, timeoutMs)
+        }
+    }
+
+    private fun pollUntilExited(process: Process, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            // Shizuku RemoteProcess lanza IllegalArgumentException (Binder: "process
+            // hasn't exited"), NO IllegalThreadStateException como un Process local.
+            // Cualquier excepción durante el sondeo = "aún no ha salido"; el deadline acota.
+            val exited = try {
+                process.exitValue()
+                true
+            } catch (e: android.os.DeadObjectException) {
+                Log.e(TAG, "Binder muerto durante sondeo — Shizuku probablemente cayó")
+                return false // falla ya: sondear el deadline completo contra un binder muerto no aporta nada
+            } catch (_: Exception) {
+                false
+            }
+            if (exited) return true
+            try {
+                Thread.sleep(POLL_INTERVAL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        return false
+    }
+
     private fun createShizukuProcess(command: String): Process {
         val cmdArray = arrayOf("sh", "-c", command)
-
         try {
             val method = Shizuku::class.java.getDeclaredMethod(
                 "newProcess",
@@ -144,25 +234,22 @@ object ShizukuExecutor {
                 Array<String>::class.java,
                 String::class.java
             ).apply { isAccessible = true }
-
             return method.invoke(null, cmdArray, null, null) as Process
-        } catch (e: NoSuchMethodException) {
-            // Fallback seguro: Runtime.exec() normal (sin privilegios Shizuku)
-            Log.w(TAG, "Shizuku.newProcess() no encontrado, usando Runtime.exec() como fallback.")
-            return Runtime.getRuntime().exec(cmdArray)
-        } catch (e: IllegalAccessException) {
-            // Fallback para cuando isAccessible no funciona (Android 12+ restrictions)
-            Log.w(TAG, "Shizuku.newProcess() acceso denegado, usando Runtime.exec() como fallback.")
-            return Runtime.getRuntime().exec(cmdArray)
         } catch (e: Exception) {
-            Log.w(TAG, "Shizuku.newProcess() error inesperado: ${e.message}, usando Runtime.exec() como fallback.")
-            return Runtime.getRuntime().exec(cmdArray)
+            Log.w(TAG, "Shizuku.newProcess() falló (${e.javaClass.simpleName}): ${e.message}")
+            throw e
         }
+    }
+
+    fun initFromContext(context: Context) {
+        RishExecutor.setApplicationId(context.packageName)
     }
 
     fun diagnose(context: Context): String {
         val state = checkState()
-        return "Shizuku State: $state\n" + if (state == State.Ready) "API Version: ${Shizuku.getVersion()}" else "Please check Shizuku app."
+        return "Shizuku State: $state\n" +
+            if (state == State.Ready) "API Version: ${Shizuku.getVersion()}"
+            else "Please check Shizuku app."
     }
 
     fun forceReconnect(context: Context): Boolean = isReady()

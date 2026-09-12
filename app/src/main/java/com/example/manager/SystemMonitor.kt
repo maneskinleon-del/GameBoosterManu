@@ -6,8 +6,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import com.example.data.repository.SystemMetrics
@@ -16,7 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.TimeUnit
 
 /**
  * Monitoreo de métricas del sistema en tiempo real.
@@ -36,6 +34,8 @@ class SystemMonitor(private val context: Context) {
         private const val TAG = "SystemMonitor"
         private const val MONITOR_INTERVAL_MS = 2000L
         private const val EXTERNAL_DEVICE_INTERVAL_MS = 5000L
+        /** Tope duro sobre ping (ms); -w 1 del binario no es fiable en todos los OEM. */
+        private const val PING_TIMEOUT_MS = 2_500L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -47,7 +47,7 @@ class SystemMonitor(private val context: Context) {
             batteryLevel = 0, batteryTemp = 0f, cpuTemp = 0f,
             gpuUsage = 0, ping = 0, dpi = 0,
             pointerSpeed = "0%", animationScale = "1x", refreshRate = "60 Hz",
-            governor = "Schedutil", touchSampling = "120 Hz",
+            governor = "Schedutil", touchSampling = "N/D",
             activeGame = null, optimizerStatus = "Idle",
             fsmState = com.example.data.repository.FsmState.READY
         )
@@ -81,8 +81,6 @@ class SystemMonitor(private val context: Context) {
     var getActiveGame: (() -> String?)? = null
     var getFsmState: (() -> com.example.data.repository.FsmState)? = null
     var getActiveProfile: (() -> com.example.data.database.ProfileEntity?)? = null
-
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun start() {
         if (isRunning) return
@@ -151,7 +149,8 @@ class SystemMonitor(private val context: Context) {
             animationScale = if (isBoosted) "0x" else "1x",
             refreshRate = activeProfile?.refreshRate ?: "60 Hz",
             governor = activeProfile?.governor ?: "Schedutil",
-            touchSampling = if (isBoosted) "360 Hz" else "120 Hz",
+            // F5-adj: no inventar Hz de touch (sampling real es OEM/sysfs)
+            touchSampling = "N/D",
             activeGame = activeGame,
             optimizerStatus = if (isBoosted) "Boosted" else "Idle",
             fsmState = fsmState
@@ -188,6 +187,7 @@ class SystemMonitor(private val context: Context) {
         }
     }
 
+    /** F5: sin lectura real → NaN (no fingir 38°C). Watchdog no actúa sobre NaN. */
     private fun getRealCpuTemp(): Float {
         val thermalFiles = listOf(
             "/sys/class/thermal/thermal_zone0/temp",
@@ -200,7 +200,7 @@ class SystemMonitor(private val context: Context) {
                 return if (temp > 1000) temp / 1000 else temp
             } catch (_: Exception) {}
         }
-        return 38.0f
+        return Float.NaN
     }
 
     private fun getRealCpuUsage(): Int {
@@ -236,20 +236,41 @@ class SystemMonitor(private val context: Context) {
         }
     }
 
+    /**
+     * Ping con tope duro (F2): no confiar solo en `-w 1` del binario.
+     * No lee stdout (RTT por wall-clock); destroyForcibly cierra el hijo si cuelga.
+     */
     private suspend fun getRealPing(): Int {
         return withContext(Dispatchers.IO) {
+            var process: Process? = null
             try {
-                val process = Runtime.getRuntime().exec("ping -c 1 -w 1 8.8.8.8")
+                process = Runtime.getRuntime().exec(arrayOf("ping", "-c", "1", "-w", "1", "8.8.8.8"))
                 val start = System.currentTimeMillis()
-                val exitValue = process.waitFor()
-                if (exitValue == 0) {
-                    val ping = (System.currentTimeMillis() - start).toInt()
+                val finished = withTimeoutOrNull(PING_TIMEOUT_MS) {
+                    try {
+                        process.waitFor(PING_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    } catch (_: Exception) {
+                        false
+                    }
+                }
+                if (finished != true) {
+                    try {
+                        process.destroyForcibly()
+                    } catch (_: Exception) {}
+                    Log.w(TAG, "ping timeout/hang — usando último valor ($lastMeasuredPing)")
+                    return@withContext lastMeasuredPing
+                }
+                if (process.exitValue() == 0) {
+                    val ping = (System.currentTimeMillis() - start).toInt().coerceAtLeast(1)
                     lastMeasuredPing = ping
                     ping
                 } else {
                     lastMeasuredPing
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                try {
+                    process?.destroyForcibly()
+                } catch (_: Exception) {}
                 lastMeasuredPing
             }
         }
