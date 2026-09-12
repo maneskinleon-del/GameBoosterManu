@@ -32,13 +32,20 @@ enum class BoostSessionState {
  *
  * `originalValue == null` representa "la key NO existía" (settings get devolvió "null"):
  * restaurar ese caso equivale a `settings delete`.
+ *
+ * #5 SSOT: `appliedValue` es el valor que NOSOTROS escribimos en esta sesión
+ * (grabado por los writers vía BoostSessionManager.recordApplied). El restore
+ * lo usa para distinguir "valor aplicado por nosotros" de "valor cambiado por
+ * el usuario" SIN depender de la tabla estática BoostKeys.appliedValueOf
+ * (que no puede ser correcta para writers dinámicos como refresh rates).
  */
 data class BackupEntry(
     val namespace: String,      // "global" | "system" | "secure"
     val key: String,
     val originalValue: String?, // null = key ausente al capturar
     val capturedAt: Long,
-    val sessionId: String
+    val sessionId: String,
+    val appliedValue: String? = null // null = aún no escrito por nosotros en esta sesión
 )
 
 data class BoostSession(
@@ -56,9 +63,11 @@ data class BoostSession(
                 put("original", e.originalValue ?: JSONObject.NULL)
                 put("capturedAt", e.capturedAt)
                 put("sessionId", e.sessionId)
+                put("applied", e.appliedValue ?: JSONObject.NULL)
             })
         }
         return JSONObject().apply {
+            put("schemaVersion", SCHEMA_VERSION)
             put("state", state.name)
             put("sessionId", sessionId)
             put("updatedAt", updatedAt)
@@ -67,12 +76,22 @@ data class BoostSession(
     }
 
     companion object {
+        /**
+         * #5 SSOT (corte limpio, decisión Q2): archivos con schemaVersion ausente
+         * o distinto → fromJson devuelve null → BoostSessionStore.load() los
+         * manda a .corrupt y borra el original. Es el purge de snapshots legacy:
+         * NUNCA se re-aplica un baseline que no entiende esta versión.
+         */
+        const val SCHEMA_VERSION = 2
+
         fun idle(): BoostSession =
             BoostSession(BoostSessionState.IDLE, emptyList(), "", 0L)
 
         fun fromJson(raw: String): BoostSession? {
             return try {
                 val obj = JSONObject(raw)
+                // Purge legacy (Q2): sin version declarada (v1) o distinta → descartar
+                if (obj.optInt("schemaVersion", -1) != SCHEMA_VERSION) return null
                 val state = try {
                     BoostSessionState.valueOf(obj.getString("state"))
                 } catch (e: Exception) {
@@ -88,7 +107,8 @@ data class BoostSession(
                             key = e.getString("key"),
                             originalValue = if (e.isNull("original")) null else e.getString("original"),
                             capturedAt = e.getLong("capturedAt"),
-                            sessionId = e.optString("sessionId", "")
+                            sessionId = e.optString("sessionId", ""),
+                            appliedValue = if (e.isNull("applied")) null else e.optString("applied", null)
                         )
                     )
                 }

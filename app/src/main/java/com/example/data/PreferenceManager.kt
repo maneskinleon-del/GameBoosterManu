@@ -170,4 +170,16 @@ object PreferenceManager {
             .remove(KEY_LAST_MANUAL_PROFILE_PREFIX + packageName)
             .apply()
     }
+
+    /**
+     * #5 SSOT (Q1/Q2): purge one-shot del override global legacy
+     * `last_manual_profile_` (prefijo sin pkg). Esa key pisaba el perfil de
+     * cualquier juego y se re-armaba sola (isManual=true); la preferencia
+     * manual ahora es exclusivamente por juego. Idempotente.
+     */
+    fun purgeLegacyGlobalManualProfile(context: Context) {
+        getPreferences(context).edit()
+            .remove(KEY_LAST_MANUAL_PROFILE_PREFIX)
+            .apply()
+    }
 }

@@ -147,6 +147,14 @@ class BoostSessionManager(
 ) {
     companion object {
         private const val TAG = "BoostSession"
+        /** Estados en los que existe un baseline activo (no IDLE/RESTORED). */
+        private val ACTIVE_STATES = listOf(
+            BoostSessionState.BASELINE_CAPTURED,
+            BoostSessionState.APPLYING,
+            BoostSessionState.ACTIVE,
+            BoostSessionState.RESTORING,
+            BoostSessionState.RECOVERY_REQUIRED
+        )
     }
 
     // ── Lectura/normalización ─────────────────────────────────────────
@@ -204,13 +212,7 @@ class BoostSessionManager(
         if (current == null) {
             log("WARN", TAG, "Sin estado persistido legible — iniciando baseline fresco")
         }
-        val active = current != null && current.state in listOf(
-            BoostSessionState.BASELINE_CAPTURED,
-            BoostSessionState.APPLYING,
-            BoostSessionState.ACTIVE,
-            BoostSessionState.RESTORING,
-            BoostSessionState.RECOVERY_REQUIRED
-        )
+        val active = current != null && current.state in ACTIVE_STATES
         val baseline: List<BackupEntry> = if (active && current != null) {
             // REUSE: jamás permitir que un valor boosted se convierta en "original"
             log("INFO", TAG, "Baseline activo (${current.state}) — reutilizando original (${current.baseline.size} keys)")
@@ -255,6 +257,41 @@ class BoostSessionManager(
     fun markActive() {
         val cur = store.load() ?: return
         store.save(cur.copy(state = BoostSessionState.ACTIVE, updatedAt = System.currentTimeMillis()))
+    }
+
+    /**
+     * #5 SSOT: los writers graban el valor real que acaban de aplicar a una key.
+     * El restore reconoce "aplicado por nosotros" con ESTE valor (verdad de la
+     * sesión) y solo cae a BoostKeys.appliedValueOf como fallback. Sin sesión
+     * activa o sin entrada de baseline para la key → no-op.
+     *
+     * Nota de race conocida: recordApplied vs markActive son load→save completos
+     * (último-escritor-gana). La degradación es grácil: un registro perdido cae
+     * al fallback estático (comportamiento pre-#5), nunca corrompe el baseline.
+     */
+    fun recordApplied(namespace: String, key: String, value: String?) {
+        val cur = store.load() ?: return
+        if (cur.state !in ACTIVE_STATES) return
+        if (cur.baseline.none { it.namespace == namespace && it.key == key }) return
+        val updated = cur.baseline.map { e ->
+            if (e.namespace == namespace && e.key == key) e.copy(appliedValue = value) else e
+        }
+        store.save(cur.copy(baseline = updated, updatedAt = System.currentTimeMillis()))
+    }
+
+    /**
+     * #5 SSOT: variante para writers que disparan comandos sueltos. Parsea
+     * "settings put <ns> <key> <value...>" / "settings delete <ns> <key>" y
+     * graba el resultado. Otros comandos (cmd power, for/dir, sysctl) se ignoran.
+     */
+    fun recordAppliedCommand(command: String) {
+        val parts = command.trim().split(Regex("\\s+"))
+        when {
+            parts[0] == "settings" && parts.getOrNull(1) == "put" && parts.size >= 5 ->
+                recordApplied(parts[2], parts[3], parts.drop(4).joinToString(" "))
+            parts[0] == "settings" && parts.getOrNull(1) == "delete" && parts.size == 4 ->
+                recordApplied(parts[2], parts[3], null)
+        }
     }
 
     // ── Restore verificado (Partes 6-7) ──────────────────────────────
@@ -310,7 +347,11 @@ class BoostSessionManager(
                     // Ya está en el valor original (o ambos ausentes) — verificado trivial
                     results[id] = RestoreResult.RESTORE_SKIPPED
                 }
-                sameValue(currentVal, BoostKeys.appliedValueOf(entry.namespace, entry.key)?.let { normalize(it) }) -> {
+                // #5 SSOT: el valor grabado por el writer en esta sesión manda; la
+                // tabla estática es SOLO fallback (keys estáticas correctas, p.ej.
+                // SystemTweaks). Para writers dinámicos el registro siempre existe
+                // (recordApplied) y la tabla ya no se consulta.
+                sameValue(currentVal, (entry.appliedValue ?: BoostKeys.appliedValueOf(entry.namespace, entry.key))?.let { normalize(it) }) -> {
                     // Caso A: contiene un valor aplicado por nosotros → restaurar
                     val okCmd = if (original == null) {
                         runCommand("settings delete ${entry.namespace} ${entry.key}")

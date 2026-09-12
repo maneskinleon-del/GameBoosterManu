@@ -117,6 +117,9 @@ class GameSessionManager(
 
         return try {
             withTimeout(INIT_TIMEOUT_MS) {
+                // #5 SSOT (Q2): purge one-shot del override global legacy.
+                // Idempotente — barato de correr en cada arranque.
+                PreferenceManager.purgeLegacyGlobalManualProfile(context)
                 checkRealShizuku()
                 fetchAvailableGovernors()
                 isReady = true
@@ -456,8 +459,14 @@ class GameSessionManager(
             // ¿Hay un perfil manual recordado (persistido) para este juego, o una
             // preferencia manual en memoria? Si sí, reaplicarlo y NO pisarlo con la
             // auto-detección.
-            val rememberedManual = PreferenceManager.getLastManualProfile(context, packageName)
-                ?: PreferenceManager.getLastManualProfile(context, "")
+            // #5 SSOT (Q1): la preferencia manual es POR JUEGO. El fallback global
+            // (key con pkg vacío) era el vector de envenenamiento persistente: pisaba
+            // perfiles auto de CUALQUIER juego y se re-armaba a sí mismo.
+            val rememberedManual = if (packageName.isNotBlank()) {
+                PreferenceManager.getLastManualProfile(context, packageName)
+            } else {
+                null
+            }
             if (rememberedManual != null || manualOverrideActive) {
                 val profileToApply = rememberedManual ?: currentProfileId ?: "extreme"
                 addLog("INFO", "Monitor", "▶️ Reaplicando perfil manual recordado: $profileToApply")
@@ -635,8 +644,12 @@ class GameSessionManager(
             currentProfileId = id
             // Recordar el perfil manual para el juego actual si hay uno activo;
             // si no, guardarlo como preferencia global para reaplicar al próximo juego.
-            val pkg = _simulatedGame.value ?: ""
-            PreferenceManager.setLastManualProfile(context, pkg, id)
+            // #5 SSOT (Q1): nunca persistir override global (pkg vacío) — la
+            // preferencia manual vive solo por juego; sin juego activo no se persiste.
+            val pkg = _simulatedGame.value
+            if (!pkg.isNullOrBlank()) {
+                PreferenceManager.setLastManualProfile(context, pkg, id)
+            }
         }
 
         scope.launch {
@@ -765,6 +778,11 @@ class GameSessionManager(
 
             val res = ShizukuExecutor.runCommand(cmd)
             if (res.isSuccess) {
+                // #5 SSOT: grabar el valor aplicado en la sesión persistida. Solo
+                // settings put/delete — otros comandos (cmd power, for/dir) no afectan
+                // el baseline (recordAppliedCommand los ignora). El restore reconoce
+                // así "aplicado por nosotros" sin depender de la tabla estática.
+                boostSession.recordAppliedCommand(cmd)
                 results += ExecResult(
                     outcome = ExecOutcome.EXECUTED(res.getOrNull()?.trim() ?: ""),
                     command = cmd
@@ -773,6 +791,8 @@ class GameSessionManager(
                 // Intentar fallback vía Settings API in-process (solo para "settings put")
                 val fallbackOutcome = trySettingsApiOutcome(cmd)
                 if (fallbackOutcome != null) {
+                    // #5 SSOT: el fallback in-process TAMBIÉN aplicó el valor → grabarlo
+                    boostSession.recordAppliedCommand(cmd)
                     results += ExecResult(outcome = fallbackOutcome, command = cmd)
                 } else {
                     // No se pudo ejecutar el comando
