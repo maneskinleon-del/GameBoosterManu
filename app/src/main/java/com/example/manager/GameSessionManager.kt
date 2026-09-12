@@ -317,7 +317,9 @@ class GameSessionManager(
                 val commands = listOf(
                     buildRestore(mobiladorPointerCap, "system", "pointer_speed", "0"),
                     buildRestore(
-                        mobiladorLongPressCap, "secure", "long_press_timeout", "400"
+                        // 120 = default real del ZTE Z2352N (MyOS 13); AOSP doc dice 400
+                        // pero ese valor no existe en este device (medido 2026-09-12).
+                        mobiladorLongPressCap, "secure", "long_press_timeout", "120"
                     )
                 )
                 val results = executePrivilegedCommands(commands, tag = "MobiladorOff")
