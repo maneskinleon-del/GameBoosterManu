@@ -33,6 +33,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -392,6 +394,9 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
             subtitle = if (isBoostActive) "Optimización activa" else "Optimización inactiva",
             action = {
                 Switch(
+                    // testTag("boost_switch"): selector estable para instrumentation
+                    // (UiAutomator vía testTagsAsResourceId) y tests Compose.
+                    modifier = Modifier.testTag("boost_switch"),
                     checked = isBoostActive,
                     onCheckedChange = { 
                         viewModel.toggleBoost()
