@@ -99,8 +99,4 @@ object ProfileManager {
         
         return true
     }
-    
-    fun restoreDefaults() {
-        applyProfile(ProfileType.BALANCED)
-    }
 }
