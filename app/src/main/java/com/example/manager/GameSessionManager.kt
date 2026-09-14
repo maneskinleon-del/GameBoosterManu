@@ -86,6 +86,14 @@ class GameSessionManager(
 
     // ─── Hysteresis ────────────────────────────────────────────────
     private val hysteresisJob = AtomicReference<Job?>(null)
+
+    // R1 (C3): Job diferido del "settle" del apply (markActive tras 8 s). Antes era
+    // fire-and-forget: si el boost se apagaba/restauraba antes de los 8 s, el Job
+    // huérfano revivía la sesión (RESTORED → ACTIVE zombie, forense 2026-09-13).
+    // Se retiene para cancelarlo en TODA salida: manual OFF, exit de juego y
+    // rollback por baseline fallido. Doble defensa: aunque sobreviva, la SSOT
+    // rechaza el ACTIVE ilegal (C4, markActiveIfApplying).
+    private var applySettleJob: Job? = null
     private var manualOverrideActive = false
     private var currentProfileId: String? = null
 
@@ -187,6 +195,8 @@ class GameSessionManager(
             // aplica el boost: sin baseline persistido no hay recovery posible.
             val sessionOk = kotlinx.coroutines.runBlocking { boostSession.beginApply() }
             if (!sessionOk) {
+                applySettleJob?.cancel()
+                applySettleJob = null
                 addLog("ERROR", "Optimizer", "No se pudo persistir el baseline — boost CANCELADO")
                 _isBoostActive.value = false
                 PreferenceManager.setServiceRunning(context, false)
@@ -198,12 +208,20 @@ class GameSessionManager(
             // Los optimizers lanzan sus writes en scopes propios; el estado pasa a
             // ACTIVE tras el arranque del boost. Si el proceso muere entre medio,
             // el estado persistido queda APPLYING → recovery al próximo arranque.
-            scope.launch {
+            // R1 (C3): Job retenido y cancelable (antes: fire-and-forget, autor del
+            // zombie RESTORED→ACTIVE). El cuerpo usa markActiveIfApplying (C4): si
+            // llegara a ejecutarse tras un restore, la SSOT lo rechaza.
+            applySettleJob?.cancel()
+            applySettleJob = scope.launch {
                 delay(8000) // margen para que los writers asíncronos (5s/2s) completen
-                boostSession.markActive()
+                boostSession.markActiveIfApplying()
             }
         } else {
             Log.d(TAG, "Deactivating boost...")
+            // R1 (C3): cancelar el settle pendiente ANTES de restaurar — sin esto,
+            // un markActive tardío reviviría la sesión (bug evidenciado).
+            applySettleJob?.cancel()
+            applySettleJob = null
             restoreSettings()
         }
     }
@@ -348,14 +366,22 @@ class GameSessionManager(
         }
     }
 
-    private fun restoreSettings() {
-        // F4: restore verificado desde el baseline persistido (fuente de verdad).
-        // Los restores RAM internos de los optimizers se conservan como capa 2;
-        // este camino cubre las 43 keys auditadas (incluidas las 12 sin restore previo).
+    /**
+     * R1 (C6): punto ÚNICO de restauración del boost. Converge las dos secuencias
+     * que antes divergían (OFF manual vía restoreSettings y exit de juego vía
+     * triggerExitWithHysteresis): mismo orden, misma cobertura, un solo lugar que
+     * mantener. `reason` etiqueta los logs (diagnóstico).
+     *
+     * Orden (F4/#5): restoreVerified primero (SSOT, verificado por relectura),
+     * capa 2 de optimizers después, animaciones/power/DND al final.
+     * Los extras exclusivos de la salida de juego (thermalservice reset,
+     * disableGameMode, Mobilador, ram clean) quedan en el call-site de exit.
+     */
+    private fun performRestore(reason: String) {
         scope.launch {
             val report = boostSession.restoreVerified()
             if (!report.allOk) {
-                addLog("ERROR", "Optimizer", "Restore verificado con fallos (${report.results.values.count { it == com.example.manager.boostsession.RestoreResult.RESTORE_FAILED }}) — quedará RECOVERY_REQUIRED")
+                addLog("ERROR", "Optimizer", "[$reason] Restore verificado con fallos (${report.results.values.count { it == com.example.manager.boostsession.RestoreResult.RESTORE_FAILED }}) — quedará RECOVERY_REQUIRED")
             }
         }
         touchOptimizer.restore()
@@ -383,6 +409,11 @@ class GameSessionManager(
             originalZenMode = null
             addLog("INFO", "GamingDND", "🔔 No Molestar restaurado")
         }
+    }
+
+    /** OFF manual del boost (switch). R1 (C6): delega en la restauración convergida. */
+    private fun restoreSettings() {
+        performRestore("manual-off")
     }
 
     // ─── Game Detection ───────────────────────────────────────────
@@ -570,6 +601,10 @@ class GameSessionManager(
     // ─── Exit with Hysteresis ─────────────────────────────────────
 
     private fun triggerExitWithHysteresis() {
+        // R1 (C3): confirmación de salida → cancelar el settle del apply PRIMERO.
+        // Un markActive tardío no debe sobrevivir al restore (zombie C4-evidenciado).
+        applySettleJob?.cancel()
+        applySettleJob = null
         hysteresisJob.set(scope.launch {
             try {
                 delay(HYSTERESIS_DELAY_MS)
@@ -582,30 +617,24 @@ class GameSessionManager(
                     // SIEMPRE apagar boost / power mode real al salir del juego,
                     // tenga o no un perfil manual activo.
                     addLog("INFO", "Monitor", "Salida de juego confirmada ($oldGame)")
-                    executePrivilegedCommands(
-                        listOf(
-                            "cmd power set-fixed-performance-mode-enabled false",
-                            "cmd power set-adaptive-power-saver-enabled true",
-                            "cmd thermalservice reset"
-                        ),
-                        tag = "Restore"
-                    )
-                    if (oldGame != null) disableGameMode(oldGame)
                     // F4: restore verificado del baseline persistido (reemplaza la
-                    // dependencia de backups RAM para las 43 keys auditadas)
-                    boostSession.restoreVerified()
-                    networkOptimizer.restore()
-                    systemTweaks.restore()
+                    // dependencia de backups RAM para las 43 keys auditadas).
+                    // R1 (C6): restauración convergida; extras exclusivos del exit:
+                    if (oldGame != null) disableGameMode(oldGame)
+                    executePrivilegedCommands(
+                        listOf("cmd thermalservice reset"),
+                        tag = "RestoreThermal"
+                    )
+                    performRestore("game-exit")
                     if (_isMobiladorActive.value) toggleMobilador()
                     ramManager.clean()
 
                     // A. Sincronizar estado en-app: apagar boost para que el overlay
-                    // (boost observer) se oculte y la notificación pase a estado neutral.
-                    // El apagado real de power mode ya corrió arriba.
+                    // (proyección R1-C5) se oculte y la notificación pase a estado neutral.
+                    // El apagado real de power mode corre dentro de performRestore.
                     if (_isBoostActive.value) {
                         _isBoostActive.value = false
                         PreferenceManager.setServiceRunning(context, false)
-                        touchOptimizer.restore()
                         addLog("INFO", "Monitor", "Boost en-app apagado (overlay oculto)")
                     }
 

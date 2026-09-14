@@ -52,6 +52,10 @@ class UnifiedAccessibilityService : AccessibilityService() {
     )
 
     // Paquetes de sistema e IMEs que nunca deben disparar lógica de entrada/salida de juego
+    // R1 (C1, defensa en profundidad): ventanas transitorias del OEM evidenciadas
+    // (OVERLAY-DISAPPEAR-FORENSIC-2026-09-13.md). La protección arquitectural real
+    // es que a11y solo PROPONE salida y el polling la confirma (C2); estos paquetes
+    // se ignoran además en el origen para no emitir siquiera el hint.
     private val ignoredPackages = setOf(
         "com.android.systemui",
         "com.google.android.inputmethod.latin",
@@ -60,7 +64,10 @@ class UnifiedAccessibilityService : AccessibilityService() {
         "android",
         "com.android.settings",
         "com.google.android.gms",
-        "com.android.permissioncontroller"
+        "com.android.permissioncontroller",
+        "com.zjx.ztezscreenshot",   // overlay de captura del ZTE (transitoria)
+        "com.android.vending",      // instalador de Play (transitoria durante launch)
+        "cn.nubia.gameassist"       // game assist del OEM (transitoria)
     )
 
     // ─────────────────────────────────────────────────────────
@@ -136,6 +143,11 @@ class UnifiedAccessibilityService : AccessibilityService() {
     // Detección de foreground (reemplaza GameOptimizerAccessibilityService)
     // ─────────────────────────────────────────────────────────
 
+    /**
+     * R1 (C2): nota de arquitectura — este servicio NUNCA ejecuta salidas de juego.
+     * Un WINDOW_STATE_CHANGED no-juego llega a repository.onForegroundAppChanged(),
+     * que solo emite un exit-hint (log + pokePoll). El árbitro es GameDetector.
+     */
     private fun handleWindowStateChanged(packageName: String) {
         // ── LOG: checkpoint #1 ──
         Log.d("FSM_DIAG", "UnifiedA11y.WINDOW_STATE_CHANGED: pkg=$packageName ts=${System.currentTimeMillis()}")
