@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -1110,8 +1111,61 @@ private fun EvidenceChip(text: String, good: Boolean) {
     }
 }
 
+/** "hace Xs/Xm/Xh" a partir del timestamp HH:mm:ss del log (sesión actual). */
+private fun relativeAge(timestamp: String): String {
+    return try {
+        val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        val then = fmt.parse(timestamp)?.time ?: return timestamp
+        val age = (System.currentTimeMillis() - then).coerceAtLeast(0)
+        when {
+            age < 60_000 -> "hace ${age / 1000}s"
+            age < 3_600_000 -> "hace ${age / 60_000}m"
+            else -> "hace ${age / 3_600_000}h"
+        }
+    } catch (_: Exception) { timestamp }
+}
+
+/**
+ * Categoría visual del evento a partir del TAG REAL del log.
+ * Mapeo exclusivo de los 19 tags productivos existentes — no se inventan eventos.
+ */
+private fun activityCategory(tag: String): Triple<String, Color, androidx.compose.ui.graphics.vector.ImageVector> = when (tag) {
+    "Optimizer", "GameMode", "Mobilador", "DPI", "Pointer" ->
+        Triple("BOOST", Color(0xFF2FD9F4), Icons.Rounded.RocketLaunch)
+    "SysTweaks", "NetworkOpt", "RamManager", "GamingDND" ->
+        Triple("OPTIMIZACIÓN", Color(0xFF4DE082), Icons.Rounded.CleaningServices)
+    else ->
+        Triple("SISTEMA", Color(0xFFCFBCFF), Icons.Rounded.Memory)
+}
+
+@Composable
+private fun ActivityFilterChip(label: String, dotColor: Color, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = if (selected) Color(0xFF2FD9F4).copy(alpha = 0.18f) else Color(0xFF171F33).copy(alpha = 0.6f),
+        shape = RoundedCornerShape(50),
+        border = BorderStroke(1.dp, if (selected) Color(0xFF2FD9F4).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f))
+    ) {
+        Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(dotColor))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, color = if (selected) Color(0xFF8AEBFF) else Color.White.copy(alpha = 0.6f))
+        }
+    }
+}
+
+@Composable
+private fun ActivitySummaryCell(label: String, value: String, valueColor: Color, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = Color.White.copy(alpha = 0.45f))
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(value, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = valueColor)
+    }
+}
+
 @Composable
 fun LogsScreen(viewModel: GameBoostViewModel) {
+    var activityFilter by remember { mutableStateOf("ALL") }
     val activeGame by viewModel.simulatedGame.collectAsStateWithLifecycle()
     val boostActive by viewModel.isBoostActive.collectAsStateWithLifecycle()
     val fsmState by viewModel.fsmState.collectAsStateWithLifecycle()
@@ -1122,29 +1176,38 @@ fun LogsScreen(viewModel: GameBoostViewModel) {
     val activeProfile = profiles.find { it.isActive }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Actividad del Boost", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        // Título + badge EN VIVO (mockup)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Actividad", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4DE082)))
+            Spacer(modifier = Modifier.weight(1f))
+            EvidenceChip(text = "EN VIVO", good = true)
+        }
+        Text("Evidencia real del Game Boost", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        // ── Estado actual (StateFlows del core — observable directo) ──
-        SectionCard(title = "ESTADO ACTUAL", icon = Icons.Rounded.PlayCircle) {
-            EvidenceStatusRow(
-                "Juego detectado",
-                if (activeGame != null) "Sí" else "No",
-                alive = activeGame != null,
-                detail = activeGame
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            EvidenceStatusRow(
-                "Boost",
-                if (boostActive) "ACTIVO" else "Inactivo",
-                alive = boostActive
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            EvidenceStatusRow(
-                "Perfil",
-                activeProfile?.name ?: "Ninguno",
-                alive = activeProfile != null,
-                detail = if (boostActive) "aplicado por el boost" else null
-            )
+        // Resumen superior 3 columnas (mockup) — datos reales
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color(0xFF1A2338),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Color(0xFF2FD9F4).copy(alpha = 0.22f))
+        ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                ActivitySummaryCell("EVENTOS", "${recent.size}", Color.White, Modifier.weight(1f))
+                Box(modifier = Modifier.width(1.dp).height(28.dp).background(Color.White.copy(alpha = 0.08f)))
+                ActivitySummaryCell("ÚLTIMO EVENTO", recent.firstOrNull()?.let { relativeAge(it.timestamp) } ?: "—", Color(0xFF8AEBFF), Modifier.weight(1f))
+                Box(modifier = Modifier.width(1.dp).height(28.dp).background(Color.White.copy(alpha = 0.08f)))
+                ActivitySummaryCell("ESTADO MOTOR", if (boostActive) "ACTIVO" else "INACTIVO", if (boostActive) Color(0xFF4DE082) else Color.White.copy(alpha = 0.5f), Modifier.weight(1f))
+            }
+        }
+
+        // Filtros funcionales por categoría real de tag
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ActivityFilterChip("Todos", Color(0xFF8AEBFF), activityFilter == "ALL") { activityFilter = "ALL" }
+            ActivityFilterChip("Boost", Color(0xFF2FD9F4), activityFilter == "BOOST") { activityFilter = "BOOST" }
+            ActivityFilterChip("Optimizaciones", Color(0xFF4DE082), activityFilter == "OPT") { activityFilter = "OPT" }
+            ActivityFilterChip("Sistema", Color(0xFFCFBCFF), activityFilter == "SYS") { activityFilter = "SYS" }
         }
 
         // ── Evidencia de sesión (snapshot SSOT persistido — acciones reales) ──
@@ -1219,22 +1282,88 @@ fun LogsScreen(viewModel: GameBoostViewModel) {
             }
         }
 
-        // ── Actividad reciente (eventos del ciclo, sin ruido DEBUG) ──
-        SectionCard(title = "ACTIVIDAD RECIENTE", icon = Icons.Rounded.History) {
-            if (recent.isEmpty()) {
-                Text("Sin eventos aún.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                recent.forEach { log ->
-                    Row(modifier = Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(when (log.level) {
-                            "ERROR" -> ErrorRed
-                            "WARN" -> WarningOrange
-                            else -> Color(0xFF00E676)
-                        }))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(log.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(log.message, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f), modifier = Modifier.weight(1f))
+        // ── Timeline de eventos (mockup: rail + dots + chips) — 100% datos reales ──
+        val filtered = if (activityFilter == "ALL") recent else recent.filter {
+            activityCategory(it.tag).first == when (activityFilter) {
+                "BOOST" -> "BOOST"; "OPT" -> "OPTIMIZACIÓN"; else -> "SISTEMA"
+            }
+        }
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Rail vertical degradado
+            Canvas(modifier = Modifier.matchParentSize().padding(start = 11.dp, top = 8.dp, bottom = 8.dp)) {
+                drawLine(
+                    brush = Brush.verticalGradient(
+                        listOf(Color(0xFF2FD9F4).copy(alpha = 0.5f), Color(0xFF4DE082).copy(alpha = 0.3f), Color.White.copy(alpha = 0.05f))
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(0f, size.height),
+                    strokeWidth = 2f
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (filtered.isEmpty()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color(0xFF171F33).copy(alpha = 0.65f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Sin registros", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(
+                                if (activityFilter == "ALL") "Aún no hay eventos en esta sesión." else "No hay eventos de esta categoría.",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+                filtered.forEach { log ->
+                    val (catLabel, catColor, _) = activityCategory(log.tag)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Dot del timeline
+                        Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                            Box(
+                                modifier = Modifier.size(14.dp).clip(CircleShape).background(Color(0xFF0B1326)).border(2.dp, catColor, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(catColor))
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        // Tarjeta del evento con barra de acento
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            color = Color(0xFF171F33).copy(alpha = 0.65f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+                        ) {
+                            Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                                Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(catColor))
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            color = catColor.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(4.dp),
+                                            border = BorderStroke(1.dp, catColor.copy(alpha = 0.3f))
+                                        ) {
+                                            Text(
+                                                catLabel,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = catColor
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.weight(1f))
+                                        Text(relativeAge(log.timestamp), style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(log.message, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.9f))
+                                }
+                            }
+                        }
                     }
                 }
             }

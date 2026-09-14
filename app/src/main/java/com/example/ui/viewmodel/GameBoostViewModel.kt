@@ -36,7 +36,7 @@ class GameBoostViewModel(private val repository: GameBoostRepository) : ViewMode
      * sigue siendo infraestructura interna (LIMIT 200 por el DAO).
      */
     val recentActivity: StateFlow<List<LogEntity>> = logs
-        .map { list -> list.filter { it.level != "DEBUG" }.take(12) }
+        .map { list -> list.filter { it.level != "DEBUG" }.take(20) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Evidencia de la sesión SSOT (snapshot persistido; polling ligero — el store es archivo, no flow). */
