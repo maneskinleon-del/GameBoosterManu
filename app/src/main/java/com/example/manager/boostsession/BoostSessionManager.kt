@@ -147,6 +147,20 @@ class BoostSessionManager(
 ) {
     companion object {
         private const val TAG = "BoostSession"
+
+        /**
+         * UI (Tab Actividad): último reporte de restore verificado, en slot
+         * COMPARTIDO entre instancias. El repositorio y GameSessionManager crean
+         * cada uno su propio BoostSessionManager sobre el MISMO store (archivo);
+         * un restore de salida de juego se ejecuta en la instancia de GSM, y la
+         * UI consulta la del repo — el reporte debe verse desde ambas. Memoria
+         * de proceso: se pierde al morir el proceso (la SSOT sigue siendo el
+         * archivo persistido).
+         */
+        @Volatile
+        var lastRestoreReport: RestoreReport? = null
+            private set
+
         /** Estados en los que existe un baseline activo (no IDLE/RESTORED). */
         private val ACTIVE_STATES = listOf(
             BoostSessionState.BASELINE_CAPTURED,
@@ -326,16 +340,6 @@ class BoostSessionManager(
     )
 
     /**
-     * UI (Tab Actividad): último reporte de restore verificado, retenido para
-     * que la evidencia de "restauración completada/fallida" sobreviva al cambio
-     * de estado a RESTORED (el store se limpia al recovery/idle). Solo lectura
-     * desde la UI; el snapshot persistido sigue siendo la única SSOT.
-     */
-    @Volatile
-    var lastRestoreReport: RestoreReport? = null
-        private set
-
-    /**
      * Restaura el baseline con verificación real por relectura.
      * Caso A: actual==aplicado → restaurar. Caso B: actual≠original≠aplicado → CONFLICT (conservar).
      * Caso C: sin baseline para la key → NO inventar (skip, no comando). Caso D: fallo post → FAILED.
@@ -424,13 +428,17 @@ class BoostSessionManager(
             s.sessionId == restoreSessionId && s.state == BoostSessionState.RESTORING
         } == true
 
+        val allOk = failed == 0
+        // Retener el reporte SIEMPRE que el restore recorrió keys (trabajo real
+        // ejecutado), incluso si el commit se aborta por cambio de sesión: la UI
+        // debe reflejar el intento y su resultado, no silenciarlo.
+        lastRestoreReport = RestoreReport(results, allOk)
+
         if (!stillMine) {
             log("WARN", TAG, "Sesión cambió durante el restore (era $restoreSessionId) — este restore NO confirma ni limpia; la sesión vigente permanece recuperable")
             return@withContext RestoreReport(results, allOk = false)
         }
 
-        val allOk = failed == 0
-        lastRestoreReport = RestoreReport(results, allOk)
         if (allOk) {
             val s = store.load()
             if (s != null) {

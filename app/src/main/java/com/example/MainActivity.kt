@@ -1111,12 +1111,19 @@ private fun EvidenceChip(text: String, good: Boolean) {
     }
 }
 
-/** "hace Xs/Xm/Xh" a partir del timestamp HH:mm:ss del log (sesión actual). */
+/** "hace Xs/Xm/Xh" a partir del timestamp HH:mm:ss del log, anclado al día actual. */
 private fun relativeAge(timestamp: String): String {
     return try {
-        val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-        val then = fmt.parse(timestamp)?.time ?: return timestamp
-        val age = (System.currentTimeMillis() - then).coerceAtLeast(0)
+        val parts = timestamp.split(":").map { it.trim().toIntOrNull() ?: return timestamp }
+        if (parts.size != 3) return timestamp
+        val cal = java.util.Calendar.getInstance()
+        val now = cal.timeInMillis
+        cal.set(java.util.Calendar.HOUR_OF_DAY, parts[0])
+        cal.set(java.util.Calendar.MINUTE, parts[1])
+        cal.set(java.util.Calendar.SECOND, parts[2])
+        // Log de ayer (madrugada): si el parse quedó >1 min en el futuro, es de ayer.
+        if (now - cal.timeInMillis < -60_000) cal.add(java.util.Calendar.DAY_OF_YEAR, -1)
+        val age = (now - cal.timeInMillis).coerceAtLeast(0)
         when {
             age < 60_000 -> "hace ${age / 1000}s"
             age < 3_600_000 -> "hace ${age / 60_000}m"

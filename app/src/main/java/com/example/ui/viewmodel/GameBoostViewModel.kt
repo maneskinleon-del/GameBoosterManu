@@ -69,10 +69,10 @@ class GameBoostViewModel(private val repository: GameBoostRepository) : ViewMode
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    /** Último restore verificado (retenido en BoostSessionManager; no es estado nuevo). */
+    /** Último restore verificado (slot compartido entre instancias de BSM; memoria de proceso). */
     val lastRestoreReport: StateFlow<BoostSessionManager.RestoreReport?> = flow {
         while (true) {
-            emit(repository.boostSession.lastRestoreReport)
+            emit(BoostSessionManager.lastRestoreReport)
             delay(3000)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
