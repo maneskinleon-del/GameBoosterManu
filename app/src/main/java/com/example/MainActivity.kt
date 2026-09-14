@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -60,12 +61,14 @@ import kotlin.math.roundToInt
 import com.example.data.database.ProfileEntity
 import com.example.manager.boostsession.BoostSessionState
 import com.example.manager.boostsession.RestoreResult
+import com.example.data.repository.FsmState
 import com.example.data.repository.SystemMetrics
 import com.example.manager.ProfileManager
 import com.example.service.GameBoostService
 import com.example.service.UnifiedAccessibilityService
 import com.example.ui.FloatingPanelManager
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.WarningOrange
 import com.example.ui.theme.ErrorRed
 import com.example.ui.viewmodel.GameBoostViewModel
@@ -1111,6 +1114,16 @@ private fun EvidenceChip(text: String, good: Boolean) {
     }
 }
 
+/** "hace Xs/Xm/Xh" desde un epoch millis (HealthStatus.lastCheck). */
+private fun relativeAgeFromEpoch(millis: Long): String {
+    val age = (System.currentTimeMillis() - millis).coerceAtLeast(0)
+    return when {
+        age < 60_000 -> "hace ${age / 1000}s"
+        age < 3_600_000 -> "hace ${age / 60_000}m"
+        else -> "hace ${age / 3_600_000}h"
+    }
+}
+
 /** "hace Xs/Xm/Xh" a partir del timestamp HH:mm:ss del log, anclado al día actual. */
 private fun relativeAge(timestamp: String): String {
     return try {
@@ -1382,81 +1395,265 @@ fun LogsScreen(viewModel: GameBoostViewModel) {
 fun DiagnosticScreen(viewModel: GameBoostViewModel) {
     val context = LocalContext.current
     val health by viewModel.healthStatus.collectAsStateWithLifecycle()
+    val deps by viewModel.dependencyState.collectAsStateWithLifecycle()
+    val fsm by viewModel.fsmState.collectAsStateWithLifecycle()
+    val activeGame by viewModel.simulatedGame.collectAsStateWithLifecycle()
+    val sessionEvidence by viewModel.sessionEvidence.collectAsStateWithLifecycle()
+    val autoDetect by viewModel.isAutoDetectGamesEnabled.collectAsStateWithLifecycle()
     val techLogs by viewModel.logs.collectAsStateWithLifecycle()
-    var report by remember { mutableStateOf("Generando...") }
+    var report by remember { mutableStateOf("") }
     var shizukuReport by remember { mutableStateOf("") }
-    
-    LaunchedEffect(Unit) { 
-        report = viewModel.getDiagnosticReport() 
+
+    fun runDiagnosis() {
+        report = viewModel.getDiagnosticReport()
         shizukuReport = viewModel.getShizukuDiagnosis(context)
     }
-    
+
+    LaunchedEffect(Unit) { runDiagnosis() }
+
+    // ── Los 5 estados de componentes provienen de fuentes reales ──
+    // Shizuku: DependencyStateManager (sondeo real) · Watchdog/Service: WatchdogManager
+    // Accessibility: DependencyStateManager · Detector: FSM + toggle · FSM: GameSessionManager
+    val shizukuReady = deps.shizuku.state == com.example.data.repository.DependencyState.Shizuku.ShizukuState.ON
+    val a11yActive = deps.accessibility.state == com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE
+    val serviceRunning = health.serviceAlive
+    val detectorOk = autoDetect || activeGame != null
+    val componentsReady = listOf(shizukuReady, a11yActive, serviceRunning, detectorOk, fsm != FsmState.DEGRADED && fsm != FsmState.RECOVERING).count { it }
+
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Diagnóstico de Sistema", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        
-        // ── Salud de dependencias (WatchdogManager — estado real) ──
-        SectionCard(title = "SALUD DEL SISTEMA", icon = Icons.Rounded.HealthAndSafety) {
-            EvidenceStatusRow("Shizuku", if (health.shizukuAlive) "vivo" else "sin señal", alive = health.shizukuAlive)
-            Spacer(modifier = Modifier.height(8.dp))
-            EvidenceStatusRow("Accesibilidad", if (health.accessibilityAlive) "vivo" else "sin señal", alive = health.accessibilityAlive)
-            Spacer(modifier = Modifier.height(8.dp))
-            EvidenceStatusRow("Servicio de boost", if (health.serviceAlive) "vivo" else "sin señal", alive = health.serviceAlive)
-            Spacer(modifier = Modifier.height(8.dp))
-            EvidenceStatusRow("Batería sin restricciones", if (health.batteryUnrestricted) "ok" else "restringida", alive = health.batteryUnrestricted)
-            if (health.restartCount > 0) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Reinicios automáticos del servicio: ${health.restartCount}", style = MaterialTheme.typography.labelSmall, color = WarningOrange)
+        // ── Banner global: derivado del conteo real de componentes ──
+        val allOk = componentsReady == 5
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = if (allOk) Color(0xFF00E676).copy(alpha = 0.08f) else WarningOrange.copy(alpha = 0.08f),
+            border = BorderStroke(1.dp, (if (allOk) Color(0xFF00E676) else WarningOrange).copy(alpha = 0.3f))
+        ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (allOk) Icons.Rounded.HealthAndSafety else Icons.Rounded.Warning,
+                    contentDescription = null,
+                    tint = if (allOk) Color(0xFF00E676) else WarningOrange,
+                    modifier = Modifier.size(22.dp)
+                )
+                Column {
+                    Text(
+                        if (allOk) "SISTEMA OPERATIVO" else "SISTEMA CON DEGRADACIONES",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (allOk) Color(0xFF00E676) else WarningOrange
+                    )
+                    Text(
+                        "$componentsReady/5 componentes listos",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(0.dp))
-        Spacer(modifier = Modifier.height(8.dp))
-        Surface(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp), color = Color.Black, shape = RoundedCornerShape(8.dp)) {
-            Text(report, color = Color.Cyan, modifier = Modifier.padding(8.dp), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text("Estado de Shizuku", fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(8.dp))
-        Surface(modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp), color = Color.Black, shape = RoundedCornerShape(8.dp)) {
-            Text(shizukuReport, color = Color.Green, modifier = Modifier.padding(8.dp), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Button(
-            onClick = { 
-                report = viewModel.getDiagnosticReport() 
-                shizukuReport = viewModel.getShizukuDiagnosis(context)
-            }, 
-            modifier = Modifier.fillMaxWidth()
+        // ── MÓDULOS DE ARQUITECTURA: los 5 componentes con estado real ──
+        SectionCard(
+            title = "MÓDULOS DE ARQUITECTURA",
+            subtitle = "$componentsReady/5 listos",
+            icon = Icons.Rounded.Memory
         ) {
-            Text("ACTUALIZAR DIAGNÓSTICO")
+            ComponentCard("Shizuku", if (shizukuReady) "DISPONIBLE" else "NO DISPONIBLE", shizukuReady, Icons.Rounded.Usb)
+            Spacer(modifier = Modifier.height(8.dp))
+            ComponentCard("Watchdog", if (serviceRunning) "ACTIVO" else "DETENIDO", serviceRunning, Icons.Rounded.HealthAndSafety)
+            Spacer(modifier = Modifier.height(8.dp))
+            ComponentCard("Game Detection", if (detectorOk) "DETECTANDO" else "DESHABILITADO", detectorOk, Icons.Rounded.SportsEsports)
+            Spacer(modifier = Modifier.height(8.dp))
+            ComponentCard("Accessibility", if (a11yActive) "ACTIVO" else "INACTIVO", a11yActive, Icons.Rounded.AccessibilityNew)
+            Spacer(modifier = Modifier.height(8.dp))
+            ComponentCard(
+                "Boost Engine (FSM)",
+                when (fsm) {
+                    FsmState.GAME_ACTIVE -> "ACTIVO — JUEGO DETECTADO"
+                    FsmState.READY -> "READY"
+                    FsmState.INITIALIZING -> "INICIALIZANDO"
+                    FsmState.DEGRADED -> "DEGRADADO"
+                    FsmState.RECOVERING -> "EN RECUPERACIÓN"
+                },
+                fsm == FsmState.GAME_ACTIVE || fsm == FsmState.READY,
+                Icons.Rounded.ElectricBolt
+            )
         }
 
-        // ── Log técnico completo (infraestructura conservada; era la Tab 3 antigua) ──
-        SectionCard(title = "LOG TÉCNICO", icon = Icons.Rounded.History) {
+        // ── SHIZUKU RUNTIME: solo campos con fuente real (diagnose()) ──
+        SectionCard(title = "SHIZUKU RUNTIME", subtitle = if (shizukuReady) "DISPONIBLE" else "NO DISPONIBLE", icon = Icons.Rounded.Usb) {
+            EvidenceStatusRow(
+                "Estado del servicio",
+                if (shizukuReady) "activo" else "sin señal",
+                alive = shizukuReady,
+                detail = deps.shizuku.detail.ifBlank { null }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                shizukuReport.ifBlank { "Sin diagnóstico aún" },
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = AccentCyan,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedButton(onClick = { runDiagnosis() }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("VERIFICAR SERVICIO", style = MaterialTheme.typography.labelMedium, letterSpacing = 1.sp)
+            }
+        }
+
+        // ── WATCHDOG MONITOR: HealthStatus real (estado + reinicios + última comprobación) ──
+        SectionCard(title = "WATCHDOG MONITOR", subtitle = if (serviceRunning) "ACTIVO" else "DETENIDO", icon = Icons.Rounded.HealthAndSafety) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MiniStat("ESTADO", if (serviceRunning) "Estable" else "Detenido", good = serviceRunning, modifier = Modifier.weight(1f))
+                MiniStat("REINICIOS", "${health.restartCount}", good = health.restartCount == 0, modifier = Modifier.weight(1f))
+                MiniStat("ÚLT. CHECK", relativeAgeFromEpoch(health.lastCheck), good = true, modifier = Modifier.weight(1f))
+            }
+        }
+
+        // ── BOOST ENGINE: FSM + sesión persistente (SSOT) ──
+        SectionCard(title = "BOOST ENGINE (FSM)", subtitle = fsm.name, icon = Icons.Rounded.ElectricBolt) {
+            EvidenceStatusRow("Juego en primer plano", activeGame ?: "ninguno", alive = activeGame != null)
+            Spacer(modifier = Modifier.height(8.dp))
+            EvidenceStatusRow(
+                "Sesión actual",
+                when (sessionEvidence?.state) {
+                    BoostSessionState.ACTIVE -> "ACTIVA — ${sessionEvidence?.baselineCount ?: 0} keys respaldadas"
+                    BoostSessionState.APPLYING -> "APLICANDO CAMBIOS"
+                    BoostSessionState.BASELINE_CAPTURED -> "BASELINE CAPTURADO"
+                    BoostSessionState.RESTORING -> "RESTAURANDO"
+                    BoostSessionState.RESTORED -> "RESTAURADA (última sesión)"
+                    BoostSessionState.RECOVERY_REQUIRED -> "RECOVERY REQUERIDO"
+                    BoostSessionState.IDLE, null -> "sin sesión activa"
+                },
+                alive = sessionEvidence?.state == BoostSessionState.ACTIVE,
+                detail = sessionEvidence?.sessionId?.let { "sesión $it" }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            EvidenceStatusRow(
+                "Recuperación",
+                if (sessionEvidence?.state == BoostSessionState.RECOVERY_REQUIRED) "RECOVERY PENDIENTE" else "sin pendientes",
+                alive = sessionEvidence?.state != BoostSessionState.RECOVERY_REQUIRED
+            )
+        }
+
+        // ── DIAGNÓSTICO DEL SISTEMA: checklist real (3 checks con fuente) ──
+        SectionCard(title = "DIAGNÓSTICO DEL SISTEMA", subtitle = "verificación en vivo", icon = Icons.Rounded.FactCheck) {
+            EvidenceStatusRow("Servicio de boost", if (health.serviceAlive) "corriendo" else "detenido", alive = health.serviceAlive)
+            Spacer(modifier = Modifier.height(8.dp))
+            EvidenceStatusRow("Enlace de accesibilidad", if (a11yActive) "activo" else "inactivo", alive = a11yActive)
+            Spacer(modifier = Modifier.height(8.dp))
+            EvidenceStatusRow("Batería sin restricciones", if (health.batteryUnrestricted) "ok" else "restringida", alive = health.batteryUnrestricted)
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedButton(onClick = { runDiagnosis() }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.FactCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("EJECUTAR VERIFICACIÓN RÁPIDA", style = MaterialTheme.typography.labelMedium, letterSpacing = 1.sp)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                report.ifBlank { "Sin diagnóstico aún" },
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = AccentCyan,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    .padding(10.dp)
+            )
+        }
+
+        // ── REGISTRO TÉCNICO: preview real (3 líneas del log existente) ──
+        SectionCard(
+            title = "REGISTRO TÉCNICO DE SISTEMA",
+            subtitle = "${techLogs.size} eventos",
+            icon = Icons.Rounded.History
+        ) {
             if (techLogs.isEmpty()) {
-                Text("Sin registros.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Sin registros en esta ejecución.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.5f)
+                )
             } else {
-                techLogs.forEach { log ->
-                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
-                        Text(log.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(8.dp))
+                techLogs.take(3).forEach { log ->
+                    Row(modifier = Modifier.padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            "[${log.level}] ${log.message}",
-                            style = MaterialTheme.typography.bodySmall,
+                            when (log.level) {
+                                "ERROR" -> "[ERR]"
+                                "WARN" -> "[WRN]"
+                                else -> "[INF]"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
                             color = when (log.level) {
                                 "ERROR" -> ErrorRed
                                 "WARN" -> WarningOrange
-                                else -> Color.White.copy(alpha = 0.8f)
+                                else -> AccentCyan
                             }
+                        )
+                        Text(
+                            "${log.timestamp} ${log.message}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color.White.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/** Tarjeta compacta de componente (grid del mockup): nombre + estado real + dot. */
+@Composable
+private fun ComponentCard(name: String, status: String, ok: Boolean, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (ok) Color(0xFF00E676).copy(alpha = 0.05f) else WarningOrange.copy(alpha = 0.05f),
+                RoundedCornerShape(10.dp)
+            )
+            .border(1.dp, (if (ok) Color(0xFF00E676) else WarningOrange).copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = if (ok) AccentCyan else WarningOrange, modifier = Modifier.size(18.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text(status, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, color = if (ok) Color(0xFF00E676) else WarningOrange)
+        }
+        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(if (ok) Color(0xFF00E676) else WarningOrange))
+    }
+}
+
+/** Stat compacta estilo mockup (Watchdog): label + valor. */
+@Composable
+private fun MiniStat(label: String, value: String, good: Boolean, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
+        Text(
+            value,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = if (good) Color(0xFF00E676) else WarningOrange
+        )
     }
 }
 
