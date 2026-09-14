@@ -470,6 +470,15 @@ class GameBoostRepository private constructor(private val context: Context) {
         return "FSM: ${sessionManager.fsmState.value}\nShizuku: ${sessionManager.shizukuConnected.value}\nBoost: ${sessionManager.isBoostActive.value}"
     }
 
+    /**
+     * UI (Tab Actividad): snapshot persistido de la sesión SSOT (schema v2).
+     * Evidencia real: estado, sessionId (con ms de inicio del boost), baseline
+     * capturado y las keys con appliedValue (escritas por el boost en esta sesión).
+     * No inventa datos: null = sin sesión activa en el store.
+     */
+    fun sessionSnapshot(): com.example.manager.boostsession.BoostSession? =
+        boostSession.sessionSnapshot()
+
     // ─── Clear Logs ──────────────────────────────────────────────
 
     suspend fun clearLogs() = logDao.clearLogs()

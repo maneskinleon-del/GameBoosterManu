@@ -326,6 +326,16 @@ class BoostSessionManager(
     )
 
     /**
+     * UI (Tab Actividad): último reporte de restore verificado, retenido para
+     * que la evidencia de "restauración completada/fallida" sobreviva al cambio
+     * de estado a RESTORED (el store se limpia al recovery/idle). Solo lectura
+     * desde la UI; el snapshot persistido sigue siendo la única SSOT.
+     */
+    @Volatile
+    var lastRestoreReport: RestoreReport? = null
+        private set
+
+    /**
      * Restaura el baseline con verificación real por relectura.
      * Caso A: actual==aplicado → restaurar. Caso B: actual≠original≠aplicado → CONFLICT (conservar).
      * Caso C: sin baseline para la key → NO inventar (skip, no comando). Caso D: fallo post → FAILED.
@@ -420,6 +430,7 @@ class BoostSessionManager(
         }
 
         val allOk = failed == 0
+        lastRestoreReport = RestoreReport(results, allOk)
         if (allOk) {
             val s = store.load()
             if (s != null) {
@@ -487,4 +498,7 @@ class BoostSessionManager(
 
     /** Estado persistido actual (para diagnóstico). */
     fun currentState(): BoostSessionState = store.load()?.state ?: BoostSessionState.IDLE
+
+    /** Snapshot persistido actual de la sesión (null = sin sesión en el store). Para UI de evidencia. */
+    fun sessionSnapshot(): BoostSession? = store.load()
 }

@@ -57,6 +57,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.example.data.PreferenceManager
 import kotlin.math.roundToInt
 import com.example.data.database.ProfileEntity
+import com.example.manager.boostsession.BoostSessionState
+import com.example.manager.boostsession.RestoreResult
 import com.example.data.repository.SystemMetrics
 import com.example.manager.ProfileManager
 import com.example.service.GameBoostService
@@ -1064,23 +1066,175 @@ fun ProfileTag(icon: androidx.compose.ui.graphics.vector.ImageVector, text: Stri
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Tab 3 — ACTIVIDAD (evidencia real del boost, orientada al jugador)
+//
+// Regla epistemológica: cada indicador proviene de estado real —
+// StateFlows del core (juego/boost/FSM/perfil) o del snapshot SSOT
+// persistido (BoostSession schema v2). Sin métricas decorativas.
+// ═══════════════════════════════════════════════════════════════════
+
+@Composable
+private fun EvidenceStatusRow(label: String, value: String, alive: Boolean, detail: String? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(if (alive) Color(0xFF00E676) else Color(0xFF546E7A))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
+            detail?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Text(value, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = if (alive) Color(0xFF00E676) else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun EvidenceChip(text: String, good: Boolean) {
+    Surface(
+        color = if (good) Color(0xFF00E676).copy(alpha = 0.12f) else Color(0xFFFF9800).copy(alpha = 0.12f),
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(1.dp, (if (good) Color(0xFF00E676) else Color(0xFFFF9800)).copy(alpha = 0.3f))
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (good) Color(0xFF00E676) else Color(0xFFFF9800)
+        )
+    }
+}
+
 @Composable
 fun LogsScreen(viewModel: GameBoostViewModel) {
-    val logs by viewModel.logs.collectAsStateWithLifecycle()
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Registros de Actividad", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(16.dp))
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(logs) { log ->
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)), border = BorderStroke(1.dp, Color.White.copy(alpha = 0.05f))) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Info, contentDescription = null, tint = if (log.level == "ERROR") ErrorRed else MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(log.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(log.message, style = MaterialTheme.typography.bodySmall)
+    val activeGame by viewModel.simulatedGame.collectAsStateWithLifecycle()
+    val boostActive by viewModel.isBoostActive.collectAsStateWithLifecycle()
+    val fsmState by viewModel.fsmState.collectAsStateWithLifecycle()
+    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val session by viewModel.sessionEvidence.collectAsStateWithLifecycle()
+    val lastRestore by viewModel.lastRestoreReport.collectAsStateWithLifecycle()
+    val recent by viewModel.recentActivity.collectAsStateWithLifecycle()
+    val activeProfile = profiles.find { it.isActive }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Actividad del Boost", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+
+        // ── Estado actual (StateFlows del core — observable directo) ──
+        SectionCard(title = "ESTADO ACTUAL", icon = Icons.Rounded.PlayCircle) {
+            EvidenceStatusRow(
+                "Juego detectado",
+                if (activeGame != null) "Sí" else "No",
+                alive = activeGame != null,
+                detail = activeGame
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            EvidenceStatusRow(
+                "Boost",
+                if (boostActive) "ACTIVO" else "Inactivo",
+                alive = boostActive
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            EvidenceStatusRow(
+                "Perfil",
+                activeProfile?.name ?: "Ninguno",
+                alive = activeProfile != null,
+                detail = if (boostActive) "aplicado por el boost" else null
+            )
+        }
+
+        // ── Evidencia de sesión (snapshot SSOT persistido — acciones reales) ──
+        SectionCard(
+            title = "EVIDENCIA DE SESIÓN",
+            icon = Icons.Rounded.FactCheck,
+            subtitle = session?.let { "sesión ${it.sessionId?.takeLast(8) ?: "—"} · inicio ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(it.updatedAt))}" }
+        ) {
+            if (session == null) {
+                Text(
+                    "Sin sesión de boost registrada. Activa el boost (manual o entrando a un juego) para capturar y aplicar cambios.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                val s = session!!
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EvidenceChip(text = s.state.name, good = s.state == BoostSessionState.ACTIVE)
+                    EvidenceChip(text = "${s.baselineCount} respaldadas", good = true)
+                    EvidenceChip(text = "${s.appliedCount} escritas", good = s.appliedCount > 0)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Valores aplicados por el boost en esta sesión:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(modifier = Modifier.height(6.dp))
+                if (s.appliedEntries.isEmpty()) {
+                    Text(
+                        if (s.state == BoostSessionState.APPLYING) "Aplicando…" else "Aún sin escrituras registradas",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    s.appliedEntries.take(8).forEach { (id, value) ->
+                        Text(
+                            "$id = $value",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.85f)
+                        )
+                    }
+                    if (s.appliedEntries.size > 8) {
+                        Text(
+                            "… y ${s.appliedEntries.size - 8} más",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Última restauración (reporte verificado por relectura) ──
+        SectionCard(title = "ÚLTIMA RESTAURACIÓN", icon = Icons.Rounded.RestartAlt) {
+            val rep = lastRestore
+            if (rep == null) {
+                Text(
+                    "Aún no hubo restauraciones en esta ejecución de la app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                val verified = rep.results.values.count { it == RestoreResult.RESTORE_VERIFIED }
+                val skipped = rep.results.values.count { it == RestoreResult.RESTORE_SKIPPED }
+                val conflicts = rep.results.values.count { it == RestoreResult.RESTORE_CONFLICT }
+                val failed = rep.results.values.count { it == RestoreResult.RESTORE_FAILED }
+                EvidenceChip(
+                    text = if (rep.allOk) "COMPLETADA Y VERIFICADA" else "CON FALLOS — RECOVERY PENDIENTE",
+                    good = rep.allOk
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("$verified restauradas · $skipped ya en valor original · $conflicts conservadas (cambiadas por el usuario) · $failed fallidas", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f))
+            }
+        }
+
+        // ── Actividad reciente (eventos del ciclo, sin ruido DEBUG) ──
+        SectionCard(title = "ACTIVIDAD RECIENTE", icon = Icons.Rounded.History) {
+            if (recent.isEmpty()) {
+                Text("Sin eventos aún.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                recent.forEach { log ->
+                    Row(modifier = Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(when (log.level) {
+                            "ERROR" -> ErrorRed
+                            "WARN" -> WarningOrange
+                            else -> Color(0xFF00E676)
+                        }))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(log.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(log.message, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f), modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -1091,6 +1245,8 @@ fun LogsScreen(viewModel: GameBoostViewModel) {
 @Composable
 fun DiagnosticScreen(viewModel: GameBoostViewModel) {
     val context = LocalContext.current
+    val health by viewModel.healthStatus.collectAsStateWithLifecycle()
+    val techLogs by viewModel.logs.collectAsStateWithLifecycle()
     var report by remember { mutableStateOf("Generando...") }
     var shizukuReport by remember { mutableStateOf("") }
     
@@ -1099,8 +1255,25 @@ fun DiagnosticScreen(viewModel: GameBoostViewModel) {
         shizukuReport = viewModel.getShizukuDiagnosis(context)
     }
     
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Text("Diagnóstico de Sistema", fontWeight = FontWeight.Bold)
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Diagnóstico de Sistema", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        
+        // ── Salud de dependencias (WatchdogManager — estado real) ──
+        SectionCard(title = "SALUD DEL SISTEMA", icon = Icons.Rounded.HealthAndSafety) {
+            EvidenceStatusRow("Shizuku", if (health.shizukuAlive) "vivo" else "sin señal", alive = health.shizukuAlive)
+            Spacer(modifier = Modifier.height(8.dp))
+            EvidenceStatusRow("Accesibilidad", if (health.accessibilityAlive) "vivo" else "sin señal", alive = health.accessibilityAlive)
+            Spacer(modifier = Modifier.height(8.dp))
+            EvidenceStatusRow("Servicio de boost", if (health.serviceAlive) "vivo" else "sin señal", alive = health.serviceAlive)
+            Spacer(modifier = Modifier.height(8.dp))
+            EvidenceStatusRow("Batería sin restricciones", if (health.batteryUnrestricted) "ok" else "restringida", alive = health.batteryUnrestricted)
+            if (health.restartCount > 0) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Reinicios automáticos del servicio: ${health.restartCount}", style = MaterialTheme.typography.labelSmall, color = WarningOrange)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(0.dp))
         Spacer(modifier = Modifier.height(8.dp))
         Surface(modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp), color = Color.Black, shape = RoundedCornerShape(8.dp)) {
             Text(report, color = Color.Cyan, modifier = Modifier.padding(8.dp), fontFamily = FontFamily.Monospace, fontSize = 10.sp)
@@ -1124,6 +1297,29 @@ fun DiagnosticScreen(viewModel: GameBoostViewModel) {
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("ACTUALIZAR DIAGNÓSTICO")
+        }
+
+        // ── Log técnico completo (infraestructura conservada; era la Tab 3 antigua) ──
+        SectionCard(title = "LOG TÉCNICO", icon = Icons.Rounded.History) {
+            if (techLogs.isEmpty()) {
+                Text("Sin registros.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                techLogs.forEach { log ->
+                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                        Text(log.timestamp, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "[${log.level}] ${log.message}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when (log.level) {
+                                "ERROR" -> ErrorRed
+                                "WARN" -> WarningOrange
+                                else -> Color.White.copy(alpha = 0.8f)
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 }
