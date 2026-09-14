@@ -172,6 +172,15 @@ class GameBoostService : Service() {
     
     private fun handleStop() {
         Log.d(TAG, "Service stopping")
+        // R1 (C5, hardening de review): el OFF manual también detiene este servicio.
+        // El hide por proyección (observador) corre en serviceScope, que muere con el
+        // servicio — si stopSelf ganara la carrera, el overlay quedaría fantasma.
+        // Este hide explícito conserva el invariante de único writer (el servicio).
+        try {
+            FloatingPanelManager.getInstance(this).hide()
+        } catch (e: Exception) {
+            Log.w(TAG, "handleStop: overlay hide: ${e.message}")
+        }
         // No forzar BALANCED al detener el servicio: el perfil activo lo gobierna
         // GameSessionManager (Room como única autoridad). applyProfile(BALANCED) aquí
         // era el autor estructural del síntoma "perfil → Balanced" (2026-09-12):
