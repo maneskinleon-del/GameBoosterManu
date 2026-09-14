@@ -14,6 +14,7 @@ import com.example.manager.ProfileManager
 import com.example.manager.ShizukuExecutor
 import com.example.ui.FloatingPanelManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.combine
 
 class GameBoostService : Service() {
     
@@ -171,6 +172,15 @@ class GameBoostService : Service() {
     
     private fun handleStop() {
         Log.d(TAG, "Service stopping")
+        // R1 (C5, hardening de review): el OFF manual también detiene este servicio.
+        // El hide por proyección (observador) corre en serviceScope, que muere con el
+        // servicio — si stopSelf ganara la carrera, el overlay quedaría fantasma.
+        // Este hide explícito conserva el invariante de único writer (el servicio).
+        try {
+            FloatingPanelManager.getInstance(this).hide()
+        } catch (e: Exception) {
+            Log.w(TAG, "handleStop: overlay hide: ${e.message}")
+        }
         // No forzar BALANCED al detener el servicio: el perfil activo lo gobierna
         // GameSessionManager (Room como única autoridad). applyProfile(BALANCED) aquí
         // era el autor estructural del síntoma "perfil → Balanced" (2026-09-12):
@@ -259,24 +269,32 @@ class GameBoostService : Service() {
                 }
             }
 
-            // Observe active boost state and show/hide panel
+            // Observe boost state + overlay request → show/hide panel
+            // R1 (C5): el servicio es el ÚNICO writer de FloatingPanelManager.show()/hide().
+            // La visibilidad es una PROYECCIÓN del estado combinado (boost activo,
+            // request de la UI); ningún otro componente decide la visibilidad.
+            // request: null = seguir al boost; false = usuario lo ocultó (R3).
             launch {
-                Log.d(TAG, "Starting boost state observer")
+                Log.d(TAG, "Starting overlay projection observer (R1 C5: single writer)")
                 try {
-                    repository.isBoostActive.collect { active ->
-                        Log.d(TAG, "🚀 Boost Active Flow emission: $active")
-                        withContext(Dispatchers.Main) {
-                            if (active) {
-                                FloatingPanelManager.getInstance(this@GameBoostService).show()
-                            } else {
-                                FloatingPanelManager.getInstance(this@GameBoostService).hide()
-                                updateNotification("Optimizer Service Running")
+                    combine(
+                        repository.isBoostActive,
+                        repository.overlayRequest
+                    ) { boost, request -> request ?: boost }
+                        .collect { wantVisible ->
+                            Log.d(TAG, "🪟 Overlay projection: wantVisible=$wantVisible")
+                            withContext(Dispatchers.Main) {
+                                if (wantVisible) {
+                                    FloatingPanelManager.getInstance(this@GameBoostService).show()
+                                } else {
+                                    FloatingPanelManager.getInstance(this@GameBoostService).hide()
+                                    updateNotification("Optimizer Service Running")
+                                }
                             }
                         }
-                    }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    Log.w(TAG, "Boost observer error: ${e.message}")
+                    Log.w(TAG, "Overlay projection observer error: ${e.message}")
                 }
             }
 

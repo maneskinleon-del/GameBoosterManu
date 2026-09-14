@@ -253,11 +253,35 @@ class BoostSessionManager(
         ok
     }
 
-    /** Marca la sesión como ACTIVE (tras completar los applies). */
+    /**
+     * R1 (C4): guarda de estado en la SSOT. Solo APPLYING puede convertirse en ACTIVE.
+     *
+     * Sin esta guarda, el `markActive()` diferido (Job huérfano del delay(8000) en
+     * GSM.toggleBoost) podía revivir una sesión ya restaurada:
+     *   restore() → RESTORED → (8 s después) markActive() → ACTIVE zombie
+     * Evidencia: OVERLAY-DISAPPEAR-FORENSIC-2026-09-13.md §8b (flip 13:58:12→13:58:14).
+     *
+     * Estados que SÍ pueden pasar a ACTIVE sin log de alarma: APPLYING (camino normal)
+     * y BASELINE_CAPTURED (apply con baseline capturado pero sin commit aún visible —
+     * en producción beginApply persiste APPLYING, se tolera por robustez).
+     */
     fun markActive() {
         val cur = store.load() ?: return
+        if (cur.state != BoostSessionState.APPLYING && cur.state != BoostSessionState.BASELINE_CAPTURED) {
+            log("WARN", TAG, "markActive ignorado: estado=${cur.state} no es APPLYING (R1 C4: evita zombie RESTORED→ACTIVE)")
+            return
+        }
         store.save(cur.copy(state = BoostSessionState.ACTIVE, updatedAt = System.currentTimeMillis()))
     }
+
+    /**
+     * R1 (C3+C4): variante explícita para el Job diferido del apply (GSM.applySettleJob).
+     * Doble defensa contra el zombie: aunque el Job sobreviva sin cancelarse (C3),
+     * la SSOT rechaza la transición inválida (C4). Semánticamente idéntico a
+     * markActive() con guarda — se mantiene como API con nombre para que el caller
+     * exprese su naturaleza de "job diferido que puede llegar tarde".
+     */
+    fun markActiveIfApplying() = markActive()
 
     /**
      * #5 SSOT: los writers graban el valor real que acaban de aplicar a una key.

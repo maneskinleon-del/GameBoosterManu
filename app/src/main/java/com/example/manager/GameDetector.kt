@@ -53,6 +53,10 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
     var onGameExited: (() -> Unit)? = null
 
     // Paquetes ignorados (sistema, launcher, teclados, etc.)
+    // R1 (C2): el polling es el ÁRBITRO de salida — su ignore list debe cubrir
+    // las ventanas transitorias del OEM (evidencia forense 2026-09-13:
+    // OVERLAY-DISAPPEAR-FORENSIC-2026-09-13.md). com.android.vending ya estaba;
+    // se añaden los otros 2 paquetes evidenciados (no se amplía más allá).
     private val ignoredPackages = setOf(
         "android", "com.android.systemui", "com.android.settings",
         "com.android.launcher3", "com.google.android.apps.nexuslauncher",
@@ -62,7 +66,9 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
         "com.google.android.gsf", "com.google.android.googlequicksearchbox",
         "com.android.deskclock", "com.android.calendar",
         "com.android.phone", "com.android.contacts",
-        "com.google.android.apps.messaging"
+        "com.google.android.apps.messaging",
+        "com.zjx.ztezscreenshot",   // overlay de captura del ZTE (transitoria)
+        "cn.nubia.gameassist"       // game assist del OEM (transitoria)
     )
 
     // Cache de juegos conocidos (package -> displayName)
@@ -153,7 +159,33 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
         val currentApp = getForegroundApp()
 
         if (currentApp != null && currentApp != lastForegroundApp) {
-            if (!ignoredPackages.contains(currentApp) &&
+            // R1 (C2): el launcher es el destino canónico de "salí del juego".
+            // Está en ignoredPackages (no debe disparar ENTRADA), pero si venimos
+            // de un juego sí es una SALIDA real. Sin esta regla, al demotar la
+            // autoridad de salida de Accessibility (C1), la salida al launcher
+            // quedaría sin árbitro (el poll la ignoraba por completo).
+            if (isLauncherPackage(currentApp)) {
+                val wasInGame = lastForegroundApp != null && isGamePackage(lastForegroundApp!!)
+                if (wasInGame) {
+                    // R1 (C2): UsageStats es eventualmente consistente — durante el
+                    // arranque de un juego (splash 5-15 s) puede seguir reportando el
+                    // launcher aunque el juego YA esté en foreground. Contrastar con el
+                    // focus real (vía shell) antes de declarar la salida; si el shell
+                    // no está disponible, se mantiene el comportamiento previo (salida).
+                    // Hallado en validación device (21:56:40: entrada a11y a FF frío,
+                    // usage=launcher durante splash → salida falsa y re-flap).
+                    val focusApp = getForegroundAppShellSuspend()
+                    if (focusApp != null && isGamePackage(focusApp)) {
+                        Log.d(TAG, "UsageStats stale (launcher) pero focus=$focusApp — no hay salida (splash)")
+                        lastForegroundApp = focusApp
+                    } else {
+                        lastForegroundApp = currentApp
+                        Log.d(TAG, "🏠 Launcher en foreground tras juego — salida real")
+                        onGameExited?.invoke()
+                    }
+                }
+                // si no venimos de un juego → ignorar (comportamiento previo)
+            } else if (!ignoredPackages.contains(currentApp) &&
                 currentApp != context.packageName) {
 
                 lastForegroundApp = currentApp
@@ -168,6 +200,38 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
                 }
             }
         }
+    }
+
+    /**
+     * R1 (C2): el launcher (home screen) es el destino canónico de salida real
+     * de un juego. Distingue "usuario fue al home" (salida) de ventanas del
+     * sistema transitorias (systemui, capturas, keyguards — NO launchers).
+     */
+    internal fun isLauncherPackage(packageName: String): Boolean {
+        return packageName.contains("launcher")
+    }
+
+    /**
+     * R1 (C2): sondeo inmediato único, sin esperar el próximo tick del ciclo.
+     * Lo invoca el exit-hint de Accessibility: la propuesta de salida se confirma
+     * (o se descarta) con una lectura real del foreground en milisegundos, en vez
+     * de esperar hasta 3 s el próximo tick. NO ejecuta el exit por sí mismo —
+     * solo corre la misma lógica del arbiter (pollForegroundApp).
+     */
+    fun pokePoll() {
+        scope.launch { pollForegroundApp() }
+    }
+
+    /**
+     * R1 (C2): sincroniza la caché de dedup del árbitro cuando Accessibility
+     * detectó la entrada por su ruta rápida. Sin esto, si el juego permanece en
+     * foreground MENOS de un ciclo de polling, el detector nunca registra la
+     * entrada y su arbitraje de salida descarta el launcher ("sin juego previo")
+     * — el boost quedaría pegado. Hallado en validación en device (21:49:42:
+     * entrada a11y, salida a t+3s ignorada; entrada >1 ciclo sí funcionaba).
+     */
+    fun notifyForegroundGame(packageName: String) {
+        lastForegroundApp = packageName
     }
 
     // ─── Detección de foreground app ────────────────────────────

@@ -155,6 +155,18 @@ class GameBoostRepository private constructor(private val context: Context) {
     val adsPointerActive: StateFlow<Boolean> get() = sessionManager.adsPointerActive
     val availableGovernors: StateFlow<List<String>> get() = sessionManager.availableGovernors
 
+    // R1 (C5): proyección del overlay. Único canal por el que la UI pide cambios
+    // de visibilidad del overlay; el observador de GameBoostService combina esto
+    // con isBoostActive y es el ÚNICO caller de FloatingPanelManager.show()/hide().
+    // null = seguir al boost (default); false = usuario lo ocultó (extensión R3,
+    // nadie lo escribe en R1); el reset a null en (re)entrada de juego re-muestra.
+    private val _overlayRequest = MutableStateFlow<Boolean?>(null)
+    val overlayRequest: StateFlow<Boolean?> get() = _overlayRequest.asStateFlow()
+
+    fun setOverlayRequested(requested: Boolean?) {
+        _overlayRequest.value = requested
+    }
+
     // ─── StateFlows desde DB ──────────────────────────────────────
     val profilesFlow: Flow<List<ProfileEntity>> = profileDao.getAllProfilesFlow()
     val logsFlow: Flow<List<LogEntity>> = logDao.getRecentLogsFlow()
@@ -197,13 +209,11 @@ class GameBoostRepository private constructor(private val context: Context) {
                     gameDetector.onGameDetected = { pkg ->
                         Log.d("GameDetector", "🎮 Auto-detect: $pkg")
                         sessionManager.setForegroundApp(pkg)
-                        // (d) Re-mostrar overlay si el boost está activo pero la vista fue
-                        // ocultada (p.ej. botón x) y volviste al juego sin pasar por la app.
-                        // No enciende boost ni perf mode: solo refleja el estado ya activo.
-                        val fpm = FloatingPanelManager.getInstance(context)
-                        if (sessionManager.isBoostActive.value && !fpm.isOverlayVisible()) {
-                            fpm.show()
-                        }
+                        // R1 (C5): re-mostrar overlay al (re)entrar al juego es ahora
+                        // parte de la proyección: limpiar el request de usuario (null)
+                        // hace que el observador del servicio re-evalúe y muestre si
+                        // el boost sigue activo. Sin writers directos de FPM aquí.
+                        setOverlayRequested(null)
                     }
                     gameDetector.onGameExited = {
                         Log.d("GameDetector", "Salida de juego detectada")
@@ -273,17 +283,41 @@ class GameBoostRepository private constructor(private val context: Context) {
     fun setForegroundApp(packageName: String) = sessionManager.setForegroundApp(packageName)
 
     /**
-     * Punto único para cambios de app en foreground (GameDetector y
-     * UnifiedAccessibilityService). Filtra por juego para que apps que no lo son
-     * (launcher, capturas, tiendas, gameassist) no disparen auto-detección ni
-     * pisen la selección manual del usuario.
+     * Punto único para cambios de app en foreground (UnifiedAccessibilityService).
+     *
+     * R1 (C1+C2): Accessibility PROPONE salida, no la ejecuta. La rama no-juego
+     * era el autor del falso game-exit: ventanas transitorias del OEM (captura
+     * ZTE, Play installer, game assist) llegaban como WINDOW_STATE_CHANGED y
+     * provocaban onForegroundAppLost() → restore con FF aún en foreground
+     * (evidencia: OVERLAY-DISAPPEAR-FORENSIC-2026-09-13.md, 13:58:03→13:58:12).
+     *
+     * Ahora: la propuesta solo registra el hint y pokes al detector (lectura real
+     * inmediata del foreground). La EJECUCIÓN de la salida es exclusiva del
+     * polling (GameDetector.onGameExited → onForegroundAppLost), que lee el
+     * estado real y tiene las transitorias en su ignore list.
      */
     fun onForegroundAppChanged(packageName: String) {
         if (gameDetector.isGamePackage(packageName)) {
+            // R1 (C2): sincronizar la vista del árbitro — la entrada vino por a11y
+            // y el polling debe saber que hay un juego en foreground para poder
+            // arbitrar su salida (aun si dura menos de un ciclo de polling).
+            gameDetector.notifyForegroundGame(packageName)
             sessionManager.setForegroundApp(packageName)
+            // (re)entrada de juego → limpiar ocultado por usuario (proyección C5)
+            setOverlayRequested(null)
         } else {
-            sessionManager.onForegroundAppLost()
+            onForegroundGameExitHint(packageName)
         }
+    }
+
+    /**
+     * R1 (C1+C2): hint de salida propuesto por Accessibility (ventana no-juego
+     * en foreground). NO toca el lifecycle: solo diagnostica y acelera la
+     * confirmación del árbitro (polling inmediato vía pokePoll).
+     */
+    private fun onForegroundGameExitHint(packageName: String) {
+        Log.d("GameBoostRepo", "R1 exit-hint (a11y propone, polling confirma): $packageName")
+        gameDetector.pokePoll()
     }
 
     fun simulateGameLaunch(packageName: String?) {

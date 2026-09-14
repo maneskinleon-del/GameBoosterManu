@@ -148,16 +148,13 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         checkAndRequestPermissions(onlySilentCheck = true)
 
-        // (d) Re-evaluar overlay al reabrir la app: si el boost sigue activo pero la
-        // vista fue ocultada (p.ej. botón x), mostrarla de nuevo. No activa boost ni
-        // perf mode: solo refleja el estado ya activo. No reintroduce el "boost fantasma"
-        // de Opción B porque no enciende boost, solo lo muestra si ya está en true.
+        // (d) R1 (C5): re-evaluar overlay al reabrir la app es parte de la proyección:
+        // resetear el request de usuario (null) hace que el observador del servicio
+        // re-muestre el overlay si el boost sigue activo (el ✕ lo había ocultado).
+        // No activa boost ni perf mode: solo refleja el estado ya activo.
         try {
             val repo = com.example.data.repository.GameBoostRepository.getInstance(this)
-            val fpm = com.example.ui.FloatingPanelManager.getInstance(this)
-            if (repo.isBoostActive.value && !fpm.isOverlayVisible()) {
-                fpm.show()
-            }
+            repo.setOverlayRequested(null)
         } catch (e: Exception) {
             Log.w("GameBoostApp", "onResume overlay re-eval: ${e.message}")
         }
@@ -405,11 +402,19 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
                             intent.action = GameBoostService.ACTION_START
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
                             PreferenceManager.setServiceRunning(context, true)
+                            // R1 (C5): boost ON manual → seguir al boost de nuevo (un
+                            // request=false viejo no debe ocultar el overlay recién activado)
+                            com.example.data.repository.GameBoostRepository
+                                .getInstance(context).setOverlayRequested(null)
                         } else {
                             intent.action = GameBoostService.ACTION_STOP
                             context.startService(intent)
                             PreferenceManager.setServiceRunning(context, false)
-                            FloatingPanelManager.getInstance(context).hide()
+                            // R1 (C5): la UI no escribe el overlay directamente — pide
+                            // vía la proyección (el observador del servicio es el único
+                            // writer de FPM.show/hide).
+                            com.example.data.repository.GameBoostRepository
+                                .getInstance(context).setOverlayRequested(false)
                         }
                     }
                 )
