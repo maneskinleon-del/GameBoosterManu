@@ -298,6 +298,10 @@ class GameBoostRepository private constructor(private val context: Context) {
      */
     fun onForegroundAppChanged(packageName: String) {
         if (gameDetector.isGamePackage(packageName)) {
+            // R1 (C2): sincronizar la vista del árbitro — la entrada vino por a11y
+            // y el polling debe saber que hay un juego en foreground para poder
+            // arbitrar su salida (aun si dura menos de un ciclo de polling).
+            gameDetector.notifyForegroundGame(packageName)
             sessionManager.setForegroundApp(packageName)
             // (re)entrada de juego → limpiar ocultado por usuario (proyección C5)
             setOverlayRequested(null)

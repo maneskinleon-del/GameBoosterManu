@@ -167,9 +167,22 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
             if (isLauncherPackage(currentApp)) {
                 val wasInGame = lastForegroundApp != null && isGamePackage(lastForegroundApp!!)
                 if (wasInGame) {
-                    lastForegroundApp = currentApp
-                    Log.d(TAG, "🏠 Launcher en foreground tras juego — salida real")
-                    onGameExited?.invoke()
+                    // R1 (C2): UsageStats es eventualmente consistente — durante el
+                    // arranque de un juego (splash 5-15 s) puede seguir reportando el
+                    // launcher aunque el juego YA esté en foreground. Contrastar con el
+                    // focus real (vía shell) antes de declarar la salida; si el shell
+                    // no está disponible, se mantiene el comportamiento previo (salida).
+                    // Hallado en validación device (21:56:40: entrada a11y a FF frío,
+                    // usage=launcher durante splash → salida falsa y re-flap).
+                    val focusApp = getForegroundAppShellSuspend()
+                    if (focusApp != null && isGamePackage(focusApp)) {
+                        Log.d(TAG, "UsageStats stale (launcher) pero focus=$focusApp — no hay salida (splash)")
+                        lastForegroundApp = focusApp
+                    } else {
+                        lastForegroundApp = currentApp
+                        Log.d(TAG, "🏠 Launcher en foreground tras juego — salida real")
+                        onGameExited?.invoke()
+                    }
                 }
                 // si no venimos de un juego → ignorar (comportamiento previo)
             } else if (!ignoredPackages.contains(currentApp) &&
@@ -207,6 +220,18 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
      */
     fun pokePoll() {
         scope.launch { pollForegroundApp() }
+    }
+
+    /**
+     * R1 (C2): sincroniza la caché de dedup del árbitro cuando Accessibility
+     * detectó la entrada por su ruta rápida. Sin esto, si el juego permanece en
+     * foreground MENOS de un ciclo de polling, el detector nunca registra la
+     * entrada y su arbitraje de salida descarta el launcher ("sin juego previo")
+     * — el boost quedaría pegado. Hallado en validación en device (21:49:42:
+     * entrada a11y, salida a t+3s ignorada; entrada >1 ciclo sí funcionaba).
+     */
+    fun notifyForegroundGame(packageName: String) {
+        lastForegroundApp = packageName
     }
 
     // ─── Detección de foreground app ────────────────────────────
