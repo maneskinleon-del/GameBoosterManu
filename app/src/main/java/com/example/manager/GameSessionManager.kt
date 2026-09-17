@@ -277,10 +277,8 @@ class GameSessionManager(
             executePrivilegedCommands(animCommands, tag = "BoostApplyAnim")
         }
 
-        scope.launch {
-            delay(2000)
-            systemTweaks.clearLogs()
-        }
+        // NOTA: no limpiar logcat aquí (SystemTweaks.clearLogs) — no tiene función
+        // operacional en el apply y destruía el buffer de diagnóstico en cada boost.
 
         // Gaming DND — silenciar notificaciones durante el juego
         scope.launch {
