@@ -480,7 +480,10 @@ class GameSessionManager(
             val name = gameName ?: if (isMapper) "Mapper" else "Potential Game"
             addLog("INFO", "Monitor", "Game detected: $name ($packageName)")
 
-            if (!_shizukuConnected.value) {
+            // Consultar el estado VIVO del binder, no la caché: _shizukuConnected puede
+            // quedar stale-true si el server muere sin boost activo (nadie lo refresca
+            // hasta el próximo evento). Hallazgo espejo de shizuku-off-t1.
+            if (!ShizukuExecutor.isReady()) {
                 addLog("WARN", "Monitor", "$name detectado pero Shizuku NO conectado")
                 _simulatedGame.value = packageName
                 return
