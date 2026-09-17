@@ -165,6 +165,21 @@ class GameSessionManager(
 
     // ─── Calbacks de Shizuku (para reconexión en caliente) ────────
 
+    /**
+     * Notificación de binder de Shizuku disponible (OnBinderReceived).
+     * La invoca el listener global registrado en MainActivity — única capa con
+     * listeners del ciclo de vida de Shizuku. Refresca el flag cacheado desde el
+     * estado REAL (recheckShizuku) y reactiva la sesión pendiente con el mecanismo
+     * existente (onShizukuReconnected). Hallazgo #5 (shizuku-off-t1): sin esto, el
+     * flag queda stale tras reiniciar el server y el gate de simulateGameLaunch
+     * bloquea detecciones válidas hasta reiniciar la app.
+     */
+    fun onShizukuBinderReceived() {
+        recheckShizuku()
+        Log.d(TAG, "OnBinderReceived → recheck (shizuku=$_shizukuConnected) + hot-reload")
+        onShizukuReconnected()
+    }
+
     fun onShizukuReconnected() {
         val currentPkg = _simulatedGame.value
         if (currentPkg != null && _fsmState.value != FsmState.GAME_ACTIVE) {

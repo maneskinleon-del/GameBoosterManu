@@ -81,6 +81,11 @@ class MainActivity : ComponentActivity() {
 
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
         checkAndRequestPermissions(onlySilentCheck = true)
+        // Hallazgo #5 (shizuku-off-t1): notificar al manager que el binder de Shizuku
+        // reapareció (server reiniciado). Sin esto, _shizukuConnected queda stale y el
+        // gate de simulateGameLaunch bloquea detecciones válidas hasta reiniciar la app.
+        com.example.data.repository.GameBoostRepository
+            .getInstance(applicationContext).onShizukuBinderReceived()
     }
 
     private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, _ ->

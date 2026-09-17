@@ -280,6 +280,7 @@ class GameBoostRepository private constructor(private val context: Context) {
     fun toggleBoost() = sessionManager.toggleBoost()
     fun toggleMobilador() = sessionManager.toggleMobilador()
     fun toggleShizukuState() = sessionManager.recheckShizuku()
+    fun onShizukuBinderReceived() = sessionManager.onShizukuBinderReceived()
     fun setForegroundApp(packageName: String) = sessionManager.setForegroundApp(packageName)
 
     /**
