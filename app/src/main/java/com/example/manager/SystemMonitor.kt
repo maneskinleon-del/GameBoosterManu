@@ -238,7 +238,11 @@ class SystemMonitor(private val context: Context) {
 
     /**
      * Ping con tope duro (F2): no confiar solo en `-w 1` del binario.
-     * No lee stdout (RTT por wall-clock); destroyForcibly cierra el hijo si cuelga.
+     * RTT real leído del stdout del binario (línea rtt min/avg/max/mdev → avg);
+     * el wall-clock del proceso queda solo como fallback si el stdout no es
+     * parseable (auditoría ping 2026-09-20: el wall medía ~80 ms de overhead
+     * spawn/exec de la JVM — evidencia PINGDIAG, wall 100–104 vs rtt 9–28, n=110 —
+     * y el overlay mostraba ~5× la latencia real). destroyForcibly si cuelga.
      */
     private suspend fun getRealPing(): Int {
         return withContext(Dispatchers.IO) {
@@ -261,7 +265,17 @@ class SystemMonitor(private val context: Context) {
                     return@withContext lastMeasuredPing
                 }
                 if (process.exitValue() == 0) {
-                    val ping = (System.currentTimeMillis() - start).toInt().coerceAtLeast(1)
+                    val wallMs = (System.currentTimeMillis() - start).toInt().coerceAtLeast(1)
+                    // Fix (auditoría ping 2026-09-20): el RTT real vive en el stdout del
+                    // binario, no en el wall-clock. Fallback: wall (comportamiento previo)
+                    // si el stdout no es parseable.
+                    val stdout = try {
+                        process.inputStream.bufferedReader().use { it.readText() }
+                    } catch (_: Exception) { "" }
+                    val rttAvgMs = Regex("""(\d+\.\d+)/(\d+\.\d+)/(\d+\.\d+)""").find(stdout)
+                        ?.groupValues?.get(2)?.toFloatOrNull()?.toInt()
+                    val ping = rttAvgMs ?: wallMs
+                    Log.d(TAG, "ping=${ping}ms (rtt=${rttAvgMs ?: "n/d"}, wall=$wallMs)")
                     lastMeasuredPing = ping
                     ping
                 } else {
