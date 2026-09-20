@@ -37,13 +37,13 @@
 
 ## 📲 Descargar APK
 
-**[⬇️ Descargar GameBoost Pro — checkpoint `fe086e0`](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/checkpoint-fe086e0/GameBoostPro-debug-fe086e0.apk)**
+**[⬇️ Descargar GameBoost Pro — checkpoint `ece1e89`](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/checkpoint-ece1e89/GameBoostPro-debug-ece1e89.apk)**
 
 | | |
 |--|--|
-| **Commit** | `fe086e0e5d7d21397d0b02f742d8614dbc05a56d` (main) |
-| **SHA-256** | `7c0b7d527996cae7a56dc9a9c062f55d6b16564477309a8b099db31cb8d5583f` |
-| **Incluye** | R1 (autoridad de ciclo de vida del boost) + Tabs Actividad/Sistema reorganizadas |
+| **Commit** | `ece1e89cd7620069cd23d7cfc9ebdd697e2cd076` (main) |
+| **SHA-256** | `900ab69adfc62138ee486baf458ba8d3253160e00f2993f963e4cae68dda7359` |
+| **Incluye** | R1 (autoridad de ciclo de vida del boost) + Tabs reorganizadas + hot-reload Shizuku (`62f0d69`) + gate stale (`1143d3c`) + fix logcat-c (`a261e0d`) + ping RTT real (`ece1e89`) |
 
 > ⚠️ Al instalar, permite "Fuentes desconocidas" en la configuración de Android.
 
