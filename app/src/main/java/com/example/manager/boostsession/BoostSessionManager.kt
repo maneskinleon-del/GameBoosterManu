@@ -2,6 +2,7 @@ package com.example.manager.boostsession
 
 import android.content.Context
 import android.util.Log
+import com.example.manager.RestoreValueValidators
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -391,6 +392,22 @@ class BoostSessionManager(
                 // (recordApplied) y la tabla ya no se consulta.
                 sameValue(currentVal, (entry.appliedValue ?: BoostKeys.appliedValueOf(entry.namespace, entry.key))?.let { normalize(it) }) -> {
                     // Caso A: contiene un valor aplicado por nosotros → restaurar
+                    // FIX H6: validar el valor read-back ANTES de interpolarlo en el
+                    // comando. Un baseline con metacaracteres shell (corrupción o
+                    // provider manipulado) no debe alcanzar runCommand() como segunda
+                    // instrucción. REGLA: rechazar, nunca mutar — preferimos declarar
+                    // el restore fallido a escribir un valor ≠ baseline.
+                    if (original != null &&
+                        !RestoreValueValidators.isValidRestoreValue(entry.key, original)
+                    ) {
+                        failed++
+                        log(
+                            "ERROR", TAG,
+                            "FIX H6: valor del baseline inválido para $id (dominio de '${entry.key}' violado) — restore NO ejecutado para esta key"
+                        )
+                        results[id] = RestoreResult.RESTORE_FAILED
+                        continue
+                    }
                     val okCmd = if (original == null) {
                         runCommand("settings delete ${entry.namespace} ${entry.key}")
                     } else {

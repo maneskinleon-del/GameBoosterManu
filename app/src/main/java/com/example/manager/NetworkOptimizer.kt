@@ -100,18 +100,40 @@ class NetworkOptimizer(
             val specifier = originalDnsSpecifier?.takeIf { it.isNotBlank() && it != "null" } ?: ""
             val wifiBt = originalWifiBtCoex?.takeIf { it.isNotBlank() && it != "null" } ?: "1"
 
+            // FIX H6 (read-back): cada valor validado contra SU dominio antes de
+            // interpolarse. Inválido → NO se ejecuta ESE restore y se informa;
+            // NUNCA se transforma ni se sustituye por otro valor. Los defaults
+            // "off"/""/"1" son los preexistentes al fix (ausencia de backup),
+            // no sustituciones de valores inválidos.
+            val restoreCmds = mutableListOf<String>()
+            if (RestoreValueValidators.isPrivateDnsMode(mode)) {
+                restoreCmds.add("settings put global private_dns_mode $mode")
+            } else {
+                repository.logAsync(
+                    "ERROR", "NetworkOpt",
+                    "FIX H6: private_dns_mode original inválido ('$mode') — restore de este valor NO ejecutado"
+                )
+            }
             // El specifier solo se escribe si el usuario tenía uno; si estaba
             // ausente, se restaura la ausencia (un put con valor vacío produce
             // un usage error, EXIT=255).
-            val restoreCmds = mutableListOf(
-                "settings put global private_dns_mode $mode"
-            )
-            if (specifier.isNotBlank()) {
-                restoreCmds.add("settings put global private_dns_specifier $specifier")
-            } else {
-                restoreCmds.add("settings delete global private_dns_specifier")
+            when {
+                specifier.isNotBlank() && RestoreValueValidators.isDnsSpecifier(specifier) ->
+                    restoreCmds.add("settings put global private_dns_specifier $specifier")
+                specifier.isNotBlank() -> repository.logAsync(
+                    "ERROR", "NetworkOpt",
+                    "FIX H6: private_dns_specifier original inválido ('$specifier') — restore de este valor NO ejecutado (se preserva byte a byte, sin transformar)"
+                )
+                else -> restoreCmds.add("settings delete global private_dns_specifier")
             }
-            restoreCmds.add("settings put global wifi_bt_coexistence $wifiBt")
+            if (RestoreValueValidators.isNumeric(wifiBt)) {
+                restoreCmds.add("settings put global wifi_bt_coexistence $wifiBt")
+            } else {
+                repository.logAsync(
+                    "ERROR", "NetworkOpt",
+                    "FIX H6: wifi_bt_coexistence original inválido ('$wifiBt') — restore de este valor NO ejecutado"
+                )
+            }
 
             for (cmd in restoreCmds) {
                 ShizukuExecutor.runCommand(cmd)

@@ -413,14 +413,27 @@ class GameSessionManager(
 
         // Restaurar modo No Molestar
         scope.launch {
-            val restoreCmd = if (!originalZenMode.isNullOrBlank()) {
-                "settings put global zen_mode $originalZenMode"
-            } else {
-                "settings put global zen_mode 0"
+            // FIX H6 (read-back): originalZenMode proviene del provider vía
+            // `settings get` (líneas 285-289). Validar dominio (numérico 0..3 AOSP)
+            // antes de interpolar. Valor inválido → NO ejecutar el put y registrar
+            // el fallo; NUNCA mutar el valor. Sin defaults inventados: el caso
+            // null/blank conserva el "0" preexistente (semántica anterior al fix).
+            val zenOriginal = originalZenMode
+            val restoreCmd: String? = when {
+                zenOriginal == null || zenOriginal.isBlank() -> "settings put global zen_mode 0"
+                RestoreValueValidators.isZenMode(zenOriginal) -> "settings put global zen_mode $zenOriginal"
+                else -> null // valor del provider no conforme al dominio → rechazar
             }
-            ShizukuExecutor.runCommand(restoreCmd)
+            if (restoreCmd != null) {
+                ShizukuExecutor.runCommand(restoreCmd)
+                addLog("INFO", "GamingDND", "🔔 No Molestar restaurado")
+            } else {
+                addLog(
+                    "ERROR", "GamingDND",
+                    "FIX H6: zen_mode original inválido ('$zenOriginal') — restore DND NO ejecutado (el baseline SSOT permanece como vía de recovery)"
+                )
+            }
             originalZenMode = null
-            addLog("INFO", "GamingDND", "🔔 No Molestar restaurado")
         }
     }
 

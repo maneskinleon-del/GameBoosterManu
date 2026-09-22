@@ -103,6 +103,16 @@ class TouchOptimizer(
                 val parts = key.split(":")
                 val ns = parts[0]
                 val name = parts[1]
+                // FIX H6 (read-back): dominio por key conocida antes de interpolar.
+                // Valor inválido → NO ejecutar ese restore y registrar; NUNCA mutar.
+                if (value != null && !RestoreValueValidators.isValidRestoreValue(name, value)) {
+                    Log.e(
+                        "TouchOptimizer",
+                        "FIX H6: valor original inválido para $key ('$value', dominio de '$name' violado) — restore NO ejecutado para esta key"
+                    )
+                    fail++
+                    continue
+                }
                 val cmd = if (value == null) {
                     "settings delete $ns $name"
                 } else {
