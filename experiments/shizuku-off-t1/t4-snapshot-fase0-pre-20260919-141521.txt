@@ -1,0 +1,20 @@
+== T4 snapshot [fase0-pre] — PC 20260919-141521 | device 2026-09-19 ==
+
+-- foreground --
+  ResumedActivity: ActivityRecord{614bc2d u0 com.whatsapp/.Conversation} t902}
+
+-- shizuku_server --
+26941 shell        shizuku_server
+
+-- boost_session.json (SSOT) --
+(no existe)
+
+-- prefs is_running / auto_boost --
+    <boolean name="is_running" value="false" />
+
+-- settings clave --
+window_animation_scale = null
+ble_scan_always_enabled = 0
+pointer_speed = 7
+
+-- servicio app --

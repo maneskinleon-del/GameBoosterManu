@@ -1,0 +1,25 @@
+== T4 snapshot [t0-s1-gameactive] — PC 20260919-142945 | device 2026-09-19 ==
+
+-- foreground --
+    topResumedActivity=ActivityRecord{2bfbec3 u0 com.dts.freefireth/.FFMainActivity} t916}
+  ResumedActivity: ActivityRecord{2bfbec3 u0 com.dts.freefireth/.FFMainActivity} t916}
+
+-- shizuku_server --
+26941 shell        shizuku_server
+
+-- boost_session.json (SSOT) --
+(no existe)
+
+-- prefs is_running / auto_boost --
+    <boolean name="is_running" value="true" />
+
+-- settings clave --
+window_animation_scale = null
+ble_scan_always_enabled = 0
+pointer_speed = 7
+
+-- servicio app --
+  * ServiceRecord{9992729 u0 com.example/.service.UnifiedAccessibilityService}
+    app=ProcessRecord{c131b4e 24768:com.example/u0a273}
+  * ServiceRecord{c5addcf u0 com.example/.service.GameBoostService}
+    app=ProcessRecord{c131b4e 24768:com.example/u0a273}
