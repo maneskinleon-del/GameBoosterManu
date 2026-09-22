@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="accessibility_onboarding_shown" value="true" />
+    <boolean name="is_running" value="true" />
+    <string name="last_manual_profile_com.dts.freefireth">ff_mouse</string>
+    <int name="window_x" value="490" />
+    <int name="window_y" value="442" />
+    <string name="profile">ADS</string>
+</map>

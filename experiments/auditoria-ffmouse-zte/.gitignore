@@ -1,0 +1,5 @@
+# Redundantes: gb.db + gb-wal consolidados == audit.db (MD5 738b5aa2...)
+# audit.db es el snapshot canónico preservado.
+gb.db
+gb.db-wal
+gb-wal
