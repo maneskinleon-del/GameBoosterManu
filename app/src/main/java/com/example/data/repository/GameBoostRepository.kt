@@ -119,6 +119,44 @@ class GameBoostRepository private constructor(private val context: Context) {
     /** Espera (suspend) a que el recovery termine — para startup writers. */
     suspend fun awaitRecoveryComplete() { recoveryGate.join() }
 
+    // PR2 (B6): job de re-detección de foreground — el último intento gana.
+    private var redetectJob: Job? = null
+
+    /**
+     * B6 (PR2): re-detección de foreground CON gates de readiness.
+     *
+     * Antes vivía inline en GameBoostService.onCreate sin esperar nada: podía correr
+     * DURANTE recoverIfNeeded() (compitiendo con el restore de arranque) y, si el
+     * fallback shell quedaba sin Shizuku a los 3.5s del intento, el intento moría y
+     * nada lo reintentaba — proceso muerto + juego en foreground = boost no
+     * restaurado (onShizukuReconnected no cubre este caso: simulatedGame es null,
+     * que es exactamente lo que este método busca). Ahora: (1) espera el
+     * recoveryGate — que se abre al FINAL del init, cuando gameDetector YA está
+     * starteado — y (2) se re-dispara desde onShizukuBinderReceived si el binder
+     * de Shizuku llegó tarde.
+     */
+    fun redetectForegroundGame() {
+        redetectJob?.cancel()
+        redetectJob = repositoryScope.launch {
+            try {
+                awaitRecoveryComplete()
+                delay(2000)
+                var fg = gameDetector.getCurrentForegroundApp()
+                if (fg.isNullOrBlank()) {
+                    delay(1500)
+                    fg = gameDetector.getCurrentForegroundApp()
+                }
+                if (!fg.isNullOrBlank() && gameDetector.isGamePackage(fg)) {
+                    simulateGameLaunch(fg)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                addLog("WARN", "System", "Re-detección foreground: ${e.message}")
+            }
+        }
+    }
+
     // Dependency State Manager
     private val dependencyStateManager = DependencyStateManager(context)
     val dependencyState = dependencyStateManager.dependencyState
@@ -248,7 +286,9 @@ class GameBoostRepository private constructor(private val context: Context) {
                     thermalController.onCriticalHeat = {
                         Log.w("GameBoostRepo", "🔥 Thermal critical — disabling boost")
                         if (sessionManager.isBoostActive.value) {
-                            sessionManager.toggleBoost()
+                            // PR2 (B1): toggleBoost es suspend (sin runBlocking) — el
+                            // callback es non-suspend, así que se eleva a repositoryScope.
+                            repositoryScope.launch { sessionManager.toggleBoost() }
                         }
                     }
                     thermalController.onSevereHeat = {
@@ -284,10 +324,17 @@ class GameBoostRepository private constructor(private val context: Context) {
 
     // ─── Métodos delegados a GameSessionManager ─────────────────
 
-    fun toggleBoost() = sessionManager.toggleBoost()
+    suspend fun toggleBoost() = sessionManager.toggleBoost()
     fun toggleMobilador() = sessionManager.toggleMobilador()
     fun toggleShizukuState() = sessionManager.recheckShizuku()
-    fun onShizukuBinderReceived() = sessionManager.onShizukuBinderReceived()
+    fun onShizukuBinderReceived() {
+        sessionManager.onShizukuBinderReceived()
+        // PR2 (B6): si la re-detección de arranque murió sin Shizuku (fallback shell
+        // no disponible) y no hay juego simulado, reintentar AHORA con el binder listo.
+        if (sessionManager.getSimulatedGame().isNullOrBlank()) {
+            redetectForegroundGame()
+        }
+    }
     fun setForegroundApp(packageName: String) = sessionManager.setForegroundApp(packageName)
 
     /**

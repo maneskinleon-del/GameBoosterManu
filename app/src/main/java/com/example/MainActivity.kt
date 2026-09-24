@@ -121,6 +121,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // PR2 (B3): este listener se registra en onCreate — sin este remove, cada
+        // recreación de la Activity acumula otro callback en la lista estática de
+        // Shizuku (N rechecks redundantes por evento de binder).
+        Shizuku.removeBinderReceivedListener(shizukuBinderListener)
         Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
         // ❌ NO destruir el overlay flotante aquí.
         // El overlay es una ventana independiente (WindowManager) que NO depende

@@ -2,6 +2,8 @@ package com.example.manager
 
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -47,6 +49,13 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
 
     // Flag de control general
     private var isStarted = false
+
+    // PR2 (B4): la registration en start() es ASÍNCRONA (scope → Main). Sin este
+    // flag, stop() quitaba un observer que pudo no haberse registrado jamás, y una
+    // registration en vuelo podía aterrizar DESPUÉS del remove → observer fantasma.
+    @Volatile
+    private var observerRegistered = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     // Callbacks
     var onGameDetected: ((packageName: String) -> Unit)? = null
@@ -122,6 +131,7 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
             withContext(Dispatchers.Main) {
                 try {
                     ProcessLifecycleOwner.get().lifecycle.addObserver(this@GameDetector)
+                    observerRegistered = true
                     Log.d(TAG, "GameDetector registrado en ProcessLifecycleOwner")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error registrando en ProcessLifecycleOwner: ${e.message}")
@@ -350,11 +360,23 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
 
     fun stop() {
         isStarted = false
-        // Desregistrar del lifecycle para evitar leaks
-        try {
-            ProcessLifecycleOwner.get().lifecycle.removeObserver(this)
-        } catch (_: Exception) {}
+        // PR2 (B4): cancelar ANTES de desregistrar — un start() en vuelo
+        // (withContext(Main) aún no ejecutado) queda cancelado y no puede
+        // re-registrar el observer DESPUÉS del remove.
         scope.cancel()  // Cancela pollJob y todos los hijos automáticamente
+        if (observerRegistered) {
+            observerRegistered = false
+            // removeObserver es @MainThread (LifecycleRegistry.enforceMainThread):
+            // el try/catch viejo tragaba el IllegalStateException cuando stop()
+            // corría fuera de Main, dejando el observer registrado para siempre.
+            mainHandler.post {
+                try {
+                    ProcessLifecycleOwner.get().lifecycle.removeObserver(this)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error deregistrando de ProcessLifecycleOwner: ${e.message}")
+                }
+            }
+        }
         Log.d(TAG, "GameDetector detenido")
     }
 }

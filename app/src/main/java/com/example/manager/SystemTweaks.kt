@@ -34,11 +34,26 @@ import kotlinx.coroutines.launch
  * degradaba a Caso B. El backup en RAM se conserva como capa 2 (best-effort
  * per-key solo si el restore SSOT deja fallos — ver GSM.performRestore).
  */
-class SystemTweaks(
-    private val repository: GameBoostRepository,
+/**
+ * PR2 (test seam): mínimo surface del repository facade que necesitan los managers
+ * de settings (su único uso es logAsync). Permite construirlos en tests JVM sin
+ * Room/Context. El ctor secundario (el de producción) adapta GameBoostRepository.
+ * internal: NO es parte de la API pública — los tests (friend compilation) lo ven,
+ * el resto del módulo solo construye managers vía el ctor secundario.
+ */
+internal fun interface BoostLogSink {
+    fun logAsync(level: String, tag: String, message: String)
+}
+
+class SystemTweaks internal constructor(
+    private val repository: BoostLogSink,
     /** PR1b (V4): batch de records SSOT — se invoca UNA vez por operación. */
     private val recordBatch: (entries: List<Triple<String, String, String?>>) -> Unit = {}
 ) {
+    constructor(
+        repository: GameBoostRepository,
+        recordBatch: (entries: List<Triple<String, String, String?>>) -> Unit = {}
+    ) : this(BoostLogSink { l, t, m -> repository.logAsync(l, t, m) }, recordBatch)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /**

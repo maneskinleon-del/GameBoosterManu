@@ -18,7 +18,13 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Run JVM unit tests (73, ~1s sin emulador)
+      - name: SSOT gate — writers privilegiados con evidencia de funnel
+        run: bash scripts/ssot_gate.sh
+
+      - name: SSOT gate self-test
+        run: bash scripts/gate_selftest.sh
+
+      - name: Run JVM unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
       - name: Upload test report on failure

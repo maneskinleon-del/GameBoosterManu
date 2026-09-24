@@ -83,7 +83,16 @@ object ShizukuExecutor {
         Shizuku.requestPermission(REQUEST_CODE)
     }
 
-    suspend fun runCommand(command: String): Result<String> = withContext(Dispatchers.IO) {
+    /**
+     * PR2 (test seam): si está seteado, intercepta ANTES de cualquier backend
+     * (Shizuku/Rish/Runtime) y devuelve su resultado directamente. Solo para tests
+     * JVM (RestoreOnlyOwnershipCrossTest); null en producción = camino idéntico.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal var commandInterceptor: ((String) -> Result<String>)? = null
+
+    suspend fun runCommand(command: String): Result<String> = commandInterceptor?.invoke(command)
+        ?: withContext(Dispatchers.IO) {
         var lastFailure: Throwable? = null
 
         // 1. Shizuku

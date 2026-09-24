@@ -195,31 +195,34 @@ class GameSessionManager(
 
     // ─── Boost Lifecycle ───────────────────────────────────────────
 
-    fun toggleBoost() {
+    // PR2 (B1+B2): suspend SIN runBlocking — beginApply() hace 34 lecturas de shell
+    // y antes corría en runBlocking sobre el hilo del caller (la vía UI → Main: jank
+    // y riesgo de ANR durante el capture). B2: _isBoostActive + is_running se pueblan
+    // SOLO si el commit del baseline fue OK (post-beginApply) — desaparece la ventana
+    // optimista en la que la UI mostraba boost activo con la SSOT sin baseline, y con
+    // ella su rollback.
+    suspend fun toggleBoost() {
         val newState = !_isBoostActive.value
         Log.d(TAG, "toggleBoost() called. Old state: ${_isBoostActive.value}, New state: $newState")
-        _isBoostActive.value = newState
-
-        PreferenceManager.setServiceRunning(context, _isBoostActive.value)
-        addLog("INFO", "Optimizer", "Boost mode: ${if (newState) "ON" else "OFF"}")
 
         if (newState) {
             Log.d(TAG, "Activating boost...")
             // F4: capturar (o reutilizar) baseline y persistir APPLYING ANTES de que
             // cualquier optimizer escriba en el sistema. Si el commit falla, no se
             // aplica el boost: sin baseline persistido no hay recovery posible.
-            val sessionOk = kotlinx.coroutines.runBlocking { boostSession.beginApply() }
+            val sessionOk = boostSession.beginApply()
             if (!sessionOk) {
                 applySettleJob?.cancel()
                 applySettleJob = null
                 addLog("ERROR", "Optimizer", "No se pudo persistir el baseline — boost CANCELADO")
-                _isBoostActive.value = false
-                PreferenceManager.setServiceRunning(context, false)
-                return
+                return // B2: el estado NUNCA llegó a true — nada que revertir
             }
+            // B2: post-beginApply — el estado refleja un baseline YA persistido
+            _isBoostActive.value = true
+            PreferenceManager.setServiceRunning(context, true)
+            addLog("INFO", "Optimizer", "Boost mode: ON")
             ensureBoostServiceRunning()
             applyBoostSettings()
-            kotlinx.coroutines.runBlocking { } // (no-op: los writers corren en sus propios scopes; markActive abajo)
             // Los optimizers lanzan sus writes en scopes propios; el estado pasa a
             // ACTIVE tras el arranque del boost. Si el proceso muere entre medio,
             // el estado persistido queda APPLYING → recovery al próximo arranque.
@@ -233,6 +236,9 @@ class GameSessionManager(
             }
         } else {
             Log.d(TAG, "Deactivating boost...")
+            _isBoostActive.value = false
+            PreferenceManager.setServiceRunning(context, false)
+            addLog("INFO", "Optimizer", "Boost mode: OFF")
             // R1 (C3): cancelar el settle pendiente ANTES de restaurar — sin esto,
             // un markActive tardío reviviría la sesión (bug evidenciado).
             applySettleJob?.cancel()

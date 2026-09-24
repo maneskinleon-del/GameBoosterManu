@@ -221,29 +221,37 @@ class BoostSessionManager(
     /**
      * Regla anti-sobrescritura: si ya existe un baseline activo (estado ≠ IDLE/RESTORED),
      * NO se recaptura — se reutiliza (los valores actuales son boosteados).
+     *
+     * PR2 (auditor, "beginApply con captura dentro de update"): el RMW es ATÓMICO.
+     * Antes: store.load() → 34 lecturas de shell (suspend, segundos) → store.save():
+     * un recordApplied/markActive/restore concurrente aterrizado en esa ventana se
+     * PERDÍA (save pisa el archivo entero). Ahora las lecturas (suspend) corren
+     * FUERA — store.update{} es síncrono bajo FILE_LOCK — y la decisión
+     * capture-or-reuse + el commit se re-evalúan dentro de update sobre el estado
+     * fresco. Además el REUSE previo al commit cierra el caso inverso: un capture
+     * lanzado sobre estado inactivo ya no puede pisar una sesión que otro writer
+     * activó durante las lecturas. Fail-closed: si el probe activo quedó inactivo
+     * al llegar al commit (sin datos frescos que commitear) → aborta con false.
      */
     suspend fun beginApply(): Boolean = withContext(Dispatchers.IO) {
-        val current = store.load()
-        if (current == null) {
+        val probe = store.load()
+        if (probe == null) {
             log("WARN", TAG, "Sin estado persistido legible — iniciando baseline fresco")
         }
-        val active = current != null && current.state in ACTIVE_STATES
-        val baseline: List<BackupEntry> = if (active && current != null) {
-            // REUSE: jamás permitir que un valor boosted se convierta en "original"
-            log("INFO", TAG, "Baseline activo (${current.state}) — reutilizando original (${current.baseline.size} keys)")
-            current.baseline
+
+        // CAPTURE (solo si NO hay baseline activo): lecturas suspend fuera del lock.
+        val captured: List<BackupEntry>? = if (probe != null && probe.state in ACTIVE_STATES) {
+            log("INFO", TAG, "Baseline activo (${probe.state}) — reutilizando original (${probe.baseline.size} keys)")
+            null
         } else {
-            // CAPTURE: leer los valores actuales reales antes del primer write.
-            // READ_FAILED en capture → abortar el apply: sin baseline fiable no hay
-            // recovery posible (fail-closed).
-            val sid = "bs_${System.currentTimeMillis()}"
+            val capSid = "bs_${System.currentTimeMillis()}"
             val now = System.currentTimeMillis()
-            val captured = mutableListOf<BackupEntry>()
+            val entries = mutableListOf<BackupEntry>()
             var readFailures = 0
             for ((ns, key) in BoostKeys.all) {
                 when (val v = readSetting(ns, key)) {
-                    is SettingRead.Present -> captured.add(BackupEntry(ns, key, v.value, now, sid))
-                    is SettingRead.Absent -> captured.add(BackupEntry(ns, key, null, now, sid))
+                    is SettingRead.Present -> entries.add(BackupEntry(ns, key, v.value, now, capSid))
+                    is SettingRead.Absent -> entries.add(BackupEntry(ns, key, null, now, capSid))
                     is SettingRead.ReadFailed -> {
                         readFailures++
                         log("ERROR", TAG, "Capture: lectura falló para $ns:$key (${v.reason}) — baseline no fiable")
@@ -254,8 +262,8 @@ class BoostSessionManager(
                 log("ERROR", TAG, "Capture incompleto ($readFailures lecturas fallidas) — boost NO debe continuar sin baseline fiable")
                 return@withContext false
             }
-            log("INFO", TAG, "Baseline capturado: ${captured.size} keys (session $sid)")
-            captured
+            log("INFO", TAG, "Baseline capturado: ${entries.size} keys (session $capSid)")
+            entries
         }
 
         // FIX Race 4.D: cada transición a APPLYING crea una IDENTIDAD de sesión
@@ -263,9 +271,44 @@ class BoostSessionManager(
         // concurrente con un restore en vuelo compartiría sessionId y el
         // re-check final no podría distinguir "mi commit" del "commit ajeno".
         val sid = "bs_${System.currentTimeMillis()}"
-        val ok = store.save(BoostSession(BoostSessionState.APPLYING, baseline, sid, System.currentTimeMillis()))
-        if (!ok) log("ERROR", TAG, "No se pudo persistir APPLYING — el boost NO debe continuar sin commit")
-        ok
+        val now = System.currentTimeMillis()
+
+        if (probe == null) {
+            // Sin archivo previo no hay RMW que cerrar: save crea la sesión (un
+            // recordApplied concurrente es no-op sin sesión — update → load null).
+            val ok = store.save(BoostSession(BoostSessionState.APPLYING, captured!!, sid, now))
+            if (!ok) log("ERROR", TAG, "No se pudo persistir APPLYING — el boost NO debe continuar sin commit")
+            return@withContext ok
+        }
+
+        // RMW atómico: la decisión se re-evalúa sobre el ÚLTIMO commit bajo FILE_LOCK.
+        var staleProbe = false
+        val committed = store.update { cur ->
+            when {
+                cur.state in ACTIVE_STATES -> {
+                    // Otro writer activó la sesión mientras capturábamos (o el probe
+                    // sigue activo): REUSE del baseline vigente — jamás un valor
+                    // boosted convertido en "original".
+                    BoostSession(BoostSessionState.APPLYING, cur.baseline, sid, now)
+                }
+                captured != null -> BoostSession(BoostSessionState.APPLYING, captured, sid, now)
+                else -> {
+                    // probe activo al inicio, pero la sesión ya no lo está: no
+                    // capturamos y NO vamos a inventar un baseline.
+                    staleProbe = true
+                    cur // misma instancia → update no reescribe
+                }
+            }
+        }
+        if (staleProbe) {
+            log("WARN", TAG, "Sesión vira entre probe y commit — beginApply abortado (reintento manual)")
+            return@withContext false
+        }
+        if (committed == null) {
+            log("ERROR", TAG, "No se pudo persistir APPLYING — el boost NO debe continuar sin commit")
+            return@withContext false
+        }
+        true
     }
 
     /**
