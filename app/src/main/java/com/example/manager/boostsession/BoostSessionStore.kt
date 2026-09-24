@@ -15,7 +15,17 @@ import java.io.RandomAccessFile
  *
  * Archivo: filesDir/boost_session.json (disco interno privado, sobrevive LMK/force-stop).
  */
-class BoostSessionStore(private val file: File) {
+class BoostSessionStore(
+    private val file: File,
+    /**
+     * PR2 (V4 determinista): observador de update() — se invoca al ENTRAR a cada
+     * llamada (con o sin transform no-op). Permite al test V4 CONTAR commits RMW
+     * (1 batch vs N por-key) en vez de medir wall-clock: el ratio sobre fsync
+     * flakeaba con carga concurrente (2.88x bajo carga vs 12.4x en reposo).
+     * null en producción = camino y overhead idénticos.
+     */
+    private val updateObserver: (() -> Unit)? = null
+) {
 
     companion object {
         private const val TAG = "BoostSessionStore"
@@ -119,6 +129,7 @@ class BoostSessionStore(private val file: File) {
      * nunca se destruye el último commit válido — ver save()).
      */
     fun update(transform: (BoostSession) -> BoostSession): BoostSession? {
+        updateObserver?.invoke() // fuera del lock: solo cuenta entradas a update()
         synchronized(FILE_LOCK) {
             val cur = load() ?: return null
             val next = transform(cur)

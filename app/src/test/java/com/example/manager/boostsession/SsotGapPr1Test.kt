@@ -1,5 +1,8 @@
 package com.example.manager.boostsession
 
+import com.example.manager.BoostLogSink
+import com.example.manager.ShizukuExecutor
+import com.example.manager.SystemTweaks
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -197,34 +200,80 @@ class SsotGapPr1Test {
         assertTrue(mgr.currentState() != BoostSessionState.IDLE)
     }
 
-    // ── V4 (cierre auditor): el batch es medible a nivel store ─────────
+    // ── V4 (reescrito PR2 — determinista): se CUENTA update(), sin wall-clock ──
+    // El test original medía un RATIO de tiempos sobre fsync y flakeaba con carga
+    // concurrente (2.88x bajo carga vs 12.4x en reposo — misma clase de assert
+    // ambiental que V1). La propiedad real es "batch = 1 update atómico, no N":
+    // un conteo de llamadas no puede flakear.
 
     @Test
-    fun `batch update es al menos 5x mas rapido que N saves secuenciales`() {
-        val base = BoostSession(
-            BoostSessionState.ACTIVE,
-            BoostKeys.all.map { (ns, key) -> BackupEntry(ns, key, "orig_$key", 1L, "bs_t") },
-            "bs_t", 1L
+    fun `V4 determinista - batch = 1 update, por-key = N updates`() = runBlocking {
+        val updates = java.util.concurrent.atomic.AtomicInteger(0)
+        val counted = BoostSessionStore(
+            File(tmp.root, "v4_count.json"),
+            updateObserver = { updates.incrementAndGet() }
         )
-        assertTrue(store.save(base))
+        val countedMgr = BoostSessionManager(counted, { Result.success("") }, log = { _, _, _ -> })
 
-        // Secuencial: 34 commits (recordApplied por-key, pre-PR1b)
-        val t1 = System.nanoTime()
-        for ((_, _) in BoostKeys.all) {
-            assertTrue(store.save(base.copy(updatedAt = System.nanoTime())))
+        // Archivo fresco: beginApply crea la sesión vía save() — no debe contar update()
+        assertTrue(countedMgr.beginApply())
+        updates.set(0)
+
+        // Batch (PR1b): 34 keys en UNA sola entrada RMW
+        countedMgr.recordAppliedBatch(BoostKeys.all.map { (ns, key) -> Triple(ns, key, "v_$key") })
+        assertEquals("recordAppliedBatch debe hacer exactamente 1 update", 1, updates.get())
+
+        // Anti-patrón pre-PR1b: recordApplied por key = N updates — esto es lo que
+        // el batch elimina; si alguien revierte el diseño, esta rama documenta el "antes"
+        // y el assert de arriba caza el "después" roto.
+        updates.set(0)
+        BoostKeys.all.forEach { (ns, key) -> countedMgr.recordApplied(ns, key, "v_$key") }
+        assertEquals(
+            "recordApplied por-key debe hacer N updates (inversión del batch)",
+            BoostKeys.all.size,
+            updates.get()
+        )
+    }
+
+    @Test
+    fun `V4 determinista - SystemTweaks apply deja exactamente 1 update batch`() {
+        val updates = java.util.concurrent.atomic.AtomicInteger(0)
+        val puts = java.util.concurrent.atomic.AtomicInteger(0)
+        val counted = BoostSessionStore(
+            File(tmp.root, "v4_apply.json"),
+            updateObserver = { updates.incrementAndGet() }
+        )
+        val countedMgr = BoostSessionManager(counted, { Result.success("") }, log = { _, _, _ -> })
+
+        // Seam PR2: observa los comandos reales de apply ANTES de los backends
+        ShizukuExecutor.commandInterceptor = { cmd ->
+            if (cmd.startsWith("settings put")) puts.incrementAndGet()
+            Result.success("")
         }
-        val sequentialMs = (System.nanoTime() - t1) / 1_000_000.0
+        try {
+            val st = SystemTweaks(
+                BoostLogSink { _, _, _ -> },
+                recordBatch = { entries -> countedMgr.recordAppliedBatch(entries) }
+            )
+            st.apply(enableMsaa = false)
 
-        // Batch: UN solo update atómico (recordAppliedBatch)
-        assertTrue(store.save(base)) // estado limpio para medir lo mismo
-        val t2 = System.nanoTime()
-        mgr.recordAppliedBatch(BoostKeys.all.map { (ns, key) -> Triple(ns, key, "v_$key") })
-        val batchedMs = (System.nanoTime() - t2) / 1_000_000.0
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline && (updates.get() == 0 || puts.get() < 10)) {
+                Thread.sleep(20)
+            }
+            Thread.sleep(300) // ventana para updates tardíos no deseados (reversión por-key)
 
-        println("[V4-timing] secuencial=${sequentialMs}ms (34 commits) | batch=${batchedMs}ms (1 update)")
-        assertTrue(
-            "batch (${batchedMs}ms) debería ser >=5x más rápido que secuencial (${sequentialMs}ms)",
-            batchedMs < sequentialMs / 5.0
-        )
+            assertTrue(
+                "apply debió emitir settings puts (puts=${puts.get()}) — no-vacío",
+                puts.get() >= 10
+            )
+            assertEquals(
+                "SystemTweaks.apply debe commitear exactamente 1 update batch, no N",
+                1,
+                updates.get()
+            )
+        } finally {
+            ShizukuExecutor.commandInterceptor = null
+        }
     }
 }
