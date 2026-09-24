@@ -123,4 +123,35 @@ object RestoreValueValidators {
      */
     fun isValidRestoreValue(key: String, value: String): Boolean =
         (forKey(key) ?: ::isSafeSettingsToken)(value)
+
+    // ── FIX H6b: dominio del namespace y estructura de la key ─────────
+
+    /**
+     * Namespaces del settings provider que este componente puede restaurar.
+     * Evidencia (inventario autoritativo): `BoostKeys.all` (BoostSessionManager.kt,
+     * globalKeys/systemKeys/secureKeys) es el ÚNICO productor de entradas de
+     * baseline, y no existe en el repo ninguna construcción de
+     * "settings get/put/delete" con namespace fuera de este conjunto
+     * (auditoría T4B post-A1). Match exacto y case-sensitive: AOSP los define
+     * en minúscula; "Global" no es un namespace válido.
+     */
+    val SETTINGS_NAMESPACES: Set<String> = setOf("global", "system", "secure")
+
+    /**
+     * Validación estructural del namespace: pertenencia exacta al dominio real
+     * del proyecto. Rechaza metacaracteres shell por construcción (un namespace
+     * con ";", "&&", ">", backticks, etc. no está en el conjunto).
+     */
+    fun isValidSettingsNamespace(namespace: String): Boolean =
+        namespace in SETTINGS_NAMESPACES
+
+    /**
+     * Validación estructural de la key: un solo token shell-inerte
+     * ([isIdentifierToken]: letras/dígitos/'.'/'-'/'_' sin espacios ni
+     * metacaracteres). NO es una whitelist de inventario: keys legacy removidas
+     * de BoostKeys (ver nota de migración) siguen siendo válidas mientras sean
+     * tokens seguros — todas las keys reales del repo (BoostKeys + optimizers,
+     * actuales y removidas documentadas) usan exclusivamente ese charset.
+     */
+    fun isValidSettingsKey(key: String): Boolean = isIdentifierToken(key)
 }

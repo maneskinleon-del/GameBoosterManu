@@ -364,6 +364,24 @@ class BoostSessionManager(
 
         for (entry in session.baseline) {
             val id = "${entry.namespace}:${entry.key}"
+
+            // FIX H6b: namespace y key del baseline persistido NO son confiables
+            // (boost_session.json es tamperable vía root/adb; allowBackup=true).
+            // H6 valida originalValue, pero estos campos se interpolan también en
+            // "settings get/put/delete ${ns} ${key}" que llega a sh -c sin quoting.
+            // Validación estructural fail-closed ANTES de cualquier runCommand()
+            // (incluye el readSetting de relectura). REGLA: rechazar, nunca mutar.
+            if (!RestoreValueValidators.isValidSettingsNamespace(entry.namespace) ||
+                !RestoreValueValidators.isValidSettingsKey(entry.key)
+            ) {
+                failed++
+                log(
+                    "ERROR", TAG,
+                    "FIX H6b: namespace/key inválidos para '$id' — restore NO ejecutado para esta entrada"
+                )
+                results[id] = RestoreResult.RESTORE_FAILED
+                continue
+            }
             val current = readSetting(entry.namespace, entry.key)
             val original = entry.originalValue?.let { normalize(it) }
 
