@@ -19,46 +19,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: SSOT gate — writers privilegiados con evidencia de funnel
-        run: |
-          # PR2 (auditor): gate permanente del grep de cierre de PR1. Semántica del
-          # patrón que quería el auditor: el `if [ -n "$bad" ]` final captura los
-          # hits (matches -> true -> exit 1; sin matches -> false -> sigue).
-          # Nivel de decisión: por ARCHIVO con evidencia de funnel (executePrivileged
-          # Command/recordApplied/recordBatch/collectIfSettings).
-          # La exención NO es grep -v de archivo entero: en GameBoostService solo se
-          # permiten las 2 líneas NS3 conocidas (restoreSavedSettings: DPI + pointer
-          # guardado, gateados por awaitRecoveryComplete + sesion IDLE). Un writer
-          # NUEVO dentro de ese archivo dispara el gate igual que en cualquier otro.
-          # Limitacion restante (documentada): un writer crudo anadido a un archivo
-          # YA evidenciado no dispara — gate por archivo, no por linea; el grep de
-          # linea pura marca falsos positivos en las llamadas multi-linea al funnel.
-          set -euo pipefail
-          PATTERN='settings put|settings delete|wm density|cmd power'
-          EVIDENCE='executePrivilegedCommand|recordApplied|recordBatch|collectIfSettings'
-          # NOTA ERE: el $ de las 2 lineas NS3 va escapado (\$) — en grep -E el $
-          # mid-pattern es ancla de fin de linea, no literal (lo demostro el test
-          # negativo local: sin escapar, las lineas conocidas disparen el gate).
-          NS3_EXEMPT='wm density \$clampedDpi|settings put system pointer_speed \$savedPointerSpeed'
-          bad=""
-          while IFS= read -r f; do
-            if grep -qE "$EVIDENCE" "$f"; then
-              continue
-            fi
-            if [[ "$f" == *GameBoostService.kt ]]; then
-              extra=$( (grep -nE "$PATTERN" "$f" || true) | grep -vE "$NS3_EXEMPT" || true )
-              if [ -n "$extra" ]; then
-                bad+="$f:"$'\n'"$extra"$'\n'
-              fi
-              continue
-            fi
-            bad+="$f"$'\n'
-          done < <(grep -rlE "$PATTERN" app/src/main/java || true)
-          if [ -n "$bad" ]; then
-            echo "SSOT gate: writers privilegiados SIN evidencia de funnel:"
-            printf '%s' "$bad"
-            exit 1
-          fi
-          echo "SSOT gate OK — todo writer con funnel o exencion NS3 por linea"
+        run: bash scripts/ssot_gate.sh
+
+      - name: SSOT gate self-test
+        run: bash scripts/gate_selftest.sh
 
       - name: Run JVM unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
