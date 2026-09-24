@@ -69,13 +69,14 @@ class GameBoostRepository private constructor(private val context: Context) {
         boostSession.recordApplied(ns, key, value)
     }
     private val ramManager = RamManager(context, this)
-    // PR1-A1: los writers de settings graban en la SSOT (mismo patrón que
-    // TouchOptimizer). Lambda diferido: boostSession se inicializa más abajo.
-    private val networkOptimizer = NetworkOptimizer(this) { ns, key, value ->
-        boostSession.recordApplied(ns, key, value)
+    // PR1-A1 + PR1b(V4): los writers de settings graban en la SSOT como batch
+    // atómico (1 commit por operación). Lambda diferido: boostSession se
+    // inicializa más abajo.
+    private val networkOptimizer = NetworkOptimizer(this) { entries ->
+        boostSession.recordAppliedBatch(entries)
     }
-    private val systemTweaks = SystemTweaks(this) { ns, key, value ->
-        boostSession.recordApplied(ns, key, value)
+    private val systemTweaks = SystemTweaks(this) { entries ->
+        boostSession.recordAppliedBatch(entries)
     }
     private val powerOptimizer = PowerOptimizer(this)
 

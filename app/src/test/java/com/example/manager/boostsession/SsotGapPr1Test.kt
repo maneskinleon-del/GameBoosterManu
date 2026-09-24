@@ -143,4 +143,57 @@ class SsotGapPr1Test {
         assertTrue(store.clearIf { it.state == BoostSessionState.RESTORED })
         assertNull(mgr.sessionSnapshot())
     }
+
+    // ── V2: cobertura de las 34 keys (no solo pointer_speed) ──────────
+
+    @Test
+    fun `apply con batch cubre las 34 keys - cero dinamicas sin appliedValue`() = runBlocking {
+        assertTrue(mgr.beginApply())
+        // Ciclo de boost completo: TODOS los writers (SystemTweaks 20 + Network 7 +
+        // Touch 4 + GSM 3: zen/anims/refreses) aplican y graban en batch.
+        mgr.recordAppliedBatch(BoostKeys.all.map { (ns, key) -> Triple(ns, key, "v_$key") })
+
+        val snap = mgr.sessionSnapshot()!!
+        assertEquals(34, snap.baseline.size)
+        val missing = snap.baseline.filter { it.appliedValue == null }
+        assertTrue("keys sin appliedValue (brecha A1): $missing", missing.isEmpty())
+
+        // Aserción del auditor: las DINÁMICAS (sin entrada en la tabla estática)
+        // son las que pre-PR1 NUNCA podían verificarse — deben quedar cubiertas.
+        val dinamicas = snap.baseline.filter { BoostKeys.appliedValueOf(it.namespace, it.key) == null }
+        assertTrue("el test debe ejercitar keys dinámicas", dinamicas.isNotEmpty())
+        assertTrue("dinámicas sin appliedValue: $dinamicas", dinamicas.all { it.appliedValue != null })
+
+        // Cierre: restore de las 34 → VERIFIED (sin CONFLICT, sin FAILED)
+        val report = mgr.restoreVerified()
+        assertTrue("report.allOk=false: ${report.results.filterValues { it != RestoreResult.RESTORE_VERIFIED }}", report.allOk)
+        assertEquals(34, report.results.size)
+    }
+
+    @Test
+    fun `restore desde conflicto parcial no pisa keys verificadas (V3 per-key)`() = runBlocking {
+        assertTrue(mgr.beginApply())
+        mgr.recordAppliedBatch(BoostKeys.all.map { (ns, key) -> Triple(ns, key, "v_$key") })
+        // El usuario cambia UNA key durante el boost (ventana) → esa será CONFLICT;
+        // el resto debe restaurar sin que un fallback completo las pise.
+        device.settings["global:auto_sync"] = "user_value"
+        val report = mgr.restoreVerified()
+        assertEquals(RestoreResult.RESTORE_CONFLICT, report.results["global:auto_sync"])
+        assertTrue(report.allOk) // conflicto no es fallo
+        // La key conservada conserva el valor del usuario (nadie la pisó)
+        assertEquals("user_value", device.settings["global:auto_sync"])
+    }
+
+    // ── NS3: premisa del gate del servicio ─────────────────────────────
+
+    @Test
+    fun `gate NS3 - currentState no es IDLE durante sesion activa`() = runBlocking {
+        // GameBoostService.restoreSavedSettings corta si currentState() != IDLE.
+        // El gate vive en el Service (no testeable en JVM); este test fija el
+        // contrato del que depende: toda sesión activa es no-IDLE.
+        assertTrue(mgr.beginApply())
+        assertTrue(mgr.currentState() != BoostSessionState.IDLE)
+        mgr.markActive()
+        assertTrue(mgr.currentState() != BoostSessionState.IDLE)
+    }
 }

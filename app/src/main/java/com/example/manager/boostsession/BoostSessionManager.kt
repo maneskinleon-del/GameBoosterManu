@@ -329,6 +329,29 @@ class BoostSessionManager(
     }
 
     /**
+     * PR1b (V4): variante BATCH de recordApplied para writers que aplican N keys
+     * en un loop (SystemTweaks/NetworkOptimizer). Un solo load→transform→save
+     * atómico en lugar de N commits con fd.sync() cada uno: reduce el I/O del
+     * apply de ~27 fsyncs a 1, sin perder atomicidad ni mezclar estados.
+     * Entradas de keys fuera del baseline → ignoradas (no-op, igual que recordApplied).
+     */
+    fun recordAppliedBatch(entries: List<Triple<String, String, String?>>) {
+        if (entries.isEmpty()) return
+        store.update { cur ->
+            if (cur.state !in ACTIVE_STATES) return@update cur // no-op
+            val requested = entries.mapTo(mutableSetOf()) { "${it.first}:${it.second}" }
+            if (cur.baseline.none { "${it.namespace}:${it.key}" in requested }) return@update cur
+            val byId = entries.associate { "${it.first}:${it.second}" to it.third }
+            cur.copy(
+                baseline = cur.baseline.map { e ->
+                    byId["${e.namespace}:${e.key}"]?.let { v -> e.copy(appliedValue = v) } ?: e
+                },
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+    }
+
+    /**
      * #5 SSOT: variante para writers que disparan comandos sueltos. Parsea
      * "settings put <ns> <key> <value...>" / "settings delete <ns> <key>" y
      * graba el resultado. Otros comandos (cmd power, for/dir, sysctl) se ignoran.

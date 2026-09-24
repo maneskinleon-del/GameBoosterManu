@@ -412,10 +412,21 @@ class GameSessionManager(
         scope.launch {
             val report = boostSession.restoreVerified()
             if (!report.allOk) {
-                addLog("ERROR", "Optimizer", "[$reason] Restore verificado con fallos (${report.results.values.count { it == com.example.manager.boostsession.RestoreResult.RESTORE_FAILED }}) — quedará RECOVERY_REQUIRED")
-                touchOptimizer.restore()
-                networkOptimizer.restore()
-                systemTweaks.restore()
+                // PR1b (V3): fallback PER-KEY, no por manager completo. Re-ejecutar
+                // el restore() entero de un manager (todas sus keys RAM) pisaría
+                // valores que la SSOT SÍ restauró o conservó legítimamente (Caso B).
+                // Solo las keys con RESTORE_FAILED se re-escriben desde el backup RAM
+                // del manager que las cubre; las demás quedan con el veredicto SSOT.
+                val failedKeys = report.results
+                    .filterValues { it == com.example.manager.boostsession.RestoreResult.RESTORE_FAILED }
+                    .keys // formato "ns:key"
+                if (failedKeys.isNotEmpty()) {
+                    addLog("WARN", "Optimizer", "[$reason] SSOT con ${failedKeys.size} fallos — capa 2 per-key: ${failedKeys.joinToString()}")
+                    touchOptimizer.restoreOnly(failedKeys)
+                    networkOptimizer.restoreOnly(failedKeys)
+                    systemTweaks.restoreOnly(failedKeys)
+                }
+                addLog("ERROR", "Optimizer", "[$reason] Restore verificado con fallos (${failedKeys.size}) — quedará RECOVERY_REQUIRED")
             }
             executePrivilegedCommands(
                 listOf(

@@ -89,61 +89,75 @@ class TouchOptimizer(
     }
 
     fun restore() {
-        scope.launch {
-            if (!isBackupDone || originalSettings.isEmpty()) {
-                Log.w(
-                    "TouchOptimizer",
-                    "Restore omitido: sin backup en RAM (usa BoostSessionManager post-muerte)"
-                )
-                return@launch
-            }
-            var ok = 0
-            var fail = 0
-            for ((key, value) in originalSettings) {
-                val parts = key.split(":")
-                val ns = parts[0]
-                val name = parts[1]
-                // FIX H6 (read-back): dominio por key conocida antes de interpolar.
-                // Valor inválido → NO ejecutar ese restore y registrar; NUNCA mutar.
-                if (value != null && !RestoreValueValidators.isValidRestoreValue(name, value)) {
-                    Log.e(
-                        "TouchOptimizer",
-                        "FIX H6: valor original inválido para $key ('$value', dominio de '$name' violado) — restore NO ejecutado para esta key"
-                    )
-                    fail++
-                    continue
-                }
-                val cmd = if (value == null) {
-                    "settings delete $ns $name"
-                } else {
-                    "settings put $ns $name $value"
-                }
-                val result = ShizukuExecutor.runCommand(cmd)
-                if (result.isSuccess) {
-                    // #5 SSOT: un delete restaura la ausencia — grabar valor aplicado null
-                    val p = cmd.trim().split(Regex("\\s+"))
-                    if (p.size == 4 && p[0] == "settings" && p[1] == "delete") {
-                        recordApplied(p[2], p[3], null)
-                    }
-                    ok++
-                } else {
-                    fail++
-                    Log.e(
-                        "TouchOptimizer",
-                        "Restore falló ($key): ${result.exceptionOrNull()?.message}"
-                    )
-                }
-            }
-            if (fail == 0) {
-                Log.d("TouchOptimizer", "Ajustes táctiles restaurados ($ok ops)")
-                originalSettings.clear()
-                isBackupDone = false
-            } else {
+        scope.launch { doRestore(keyFilter = null) }
+    }
+
+    /**
+     * PR1b (V3): restore per-key — SOLO las keys con RESTORE_FAILED de la SSOT se
+     * re-escriben desde el backup RAM. Las keys del reporte llegan como "ns:key",
+     * el mismo formato de este mapa ("system:pointer_speed" matchea directo).
+     */
+    fun restoreOnly(failedKeys: Set<String>) {
+        if (failedKeys.isEmpty()) return
+        scope.launch { doRestore(keyFilter = { it in failedKeys }) }
+    }
+
+    /** Núcleo compartido de restore()/restoreOnly(). filter null = todas las keys. */
+    private suspend fun doRestore(keyFilter: ((String) -> Boolean)?) {
+        if (!isBackupDone || originalSettings.isEmpty()) {
+            Log.w(
+                "TouchOptimizer",
+                "Restore omitido: sin backup en RAM (usa BoostSessionManager post-muerte)"
+            )
+            return
+        }
+        var ok = 0
+        var fail = 0
+        for ((key, value) in originalSettings) {
+            if (keyFilter != null && !keyFilter(key)) continue
+            val parts = key.split(":")
+            val ns = parts[0]
+            val name = parts[1]
+            // FIX H6 (read-back): dominio por key conocida antes de interpolar.
+            // Valor inválido → NO ejecutar ese restore y registrar; NUNCA mutar.
+            if (value != null && !RestoreValueValidators.isValidRestoreValue(name, value)) {
                 Log.e(
                     "TouchOptimizer",
-                    "Restore parcial ok=$ok fail=$fail — mapa conservado para reintento"
+                    "FIX H6: valor original inválido para $key ('$value', dominio de '$name' violado) — restore NO ejecutado para esta key"
+                )
+                fail++
+                continue
+            }
+            val cmd = if (value == null) {
+                "settings delete $ns $name"
+            } else {
+                "settings put $ns $name $value"
+            }
+            val result = ShizukuExecutor.runCommand(cmd)
+            if (result.isSuccess) {
+                // #5 SSOT: un delete restaura la ausencia — grabar valor aplicado null
+                val p = cmd.trim().split(Regex("\\s+"))
+                if (p.size == 4 && p[0] == "settings" && p[1] == "delete") {
+                    recordApplied(p[2], p[3], null)
+                }
+                ok++
+            } else {
+                fail++
+                Log.e(
+                    "TouchOptimizer",
+                    "Restore falló ($key): ${result.exceptionOrNull()?.message}"
                 )
             }
+        }
+        if (fail == 0) {
+            Log.d("TouchOptimizer", "Ajustes táctiles restaurados ($ok ops)")
+            originalSettings.clear()
+            isBackupDone = false
+        } else {
+            Log.e(
+                "TouchOptimizer",
+                "Restore parcial ok=$ok fail=$fail — mapa conservado para reintento"
+            )
         }
     }
 }

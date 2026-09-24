@@ -4,6 +4,7 @@ import android.content.Context
 import android.provider.Settings
 import android.util.Log
 import com.example.data.repository.GameBoostRepository
+import com.example.manager.exec.ExecOutcome
 import kotlinx.coroutines.*
 import rikka.shizuku.Shizuku
 import android.content.ComponentName
@@ -38,12 +39,18 @@ class AdsPointerManager(private val context: Context, private val repository: Ga
         scope.launch {
             try {
                 val rawSpeed = repository.mapPercentToRawSpeed(percent)
-                val result = ShizukuExecutor.runCommand("settings put system pointer_speed $rawSpeed")
-                if (result.isSuccess) {
-                    repository.logAsync("DEBUG", "AdsPointer", "Pointer speed changed to $percent% ($mode) via Shizuku")
+                // PR1b: vía el funnel SSOT (executePrivilegedCommand → funnel GSM →
+                // recordAppliedCommand). Antes era runCommand directo + fallback
+                // in-process: un bypass SSOT puro — el valor del botón ADS quedaba
+                // "no nuestro" y el restore de pointer_speed degradaba a CONFLICT.
+                // El funnel ya incluye el fallback Settings API y graba el appliedValue.
+                val results = repository.executePrivilegedCommand(
+                    "settings put system pointer_speed $rawSpeed"
+                )
+                if (results.all { it.outcome is ExecOutcome.EXECUTED }) {
+                    repository.logAsync("DEBUG", "AdsPointer", "Pointer speed changed to $percent% ($mode) via funnel SSOT")
                 } else {
-                    applyPointerSpeedFallback(rawSpeed)
-                    repository.logAsync("WARN", "AdsPointer", "Shizuku error, using fallback for speed $percent%")
+                    repository.logAsync("WARN", "AdsPointer", "Fallo funnel para speed $percent% ($mode)")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error applying pointer speed: ${e.message}")
