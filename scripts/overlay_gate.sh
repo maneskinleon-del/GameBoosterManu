@@ -28,11 +28,11 @@ fi
 viol=0
 
 # 1. Todo uso del FPM vive en el servicio (único writer R1 C5).
-#    NOTA: se filtran comentarios Kotlin (// y KDoc *) — pueden MENCIONAR el FPM sin
-#    ser writers (falso positivo cazado por OV-POS2 del self-test, misma clase de
-#    bug que el ancla ERE de PR#2: un gate sin self-test no lo habría visto).
+#    NOTA: se filtran comentarios Kotlin (// y KDoc *) y strings literales ("...")
+#    — pueden MENCIONAR el FPM sin ser writers (falso positivo cazado por OV-POS2/3).
 fpm_sites=$(grep -rn 'FloatingPanelManager\.getInstance' "$ROOT" 2>/dev/null \
-  | grep -vE ':[0-9]+:[[:space:]]*(//|\*)' || true)
+  | grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
+  | grep -vE ':[0-9]+:[^"]*".*FloatingPanelManager\.getInstance.*"' || true)
 if [ -n "$fpm_sites" ]; then
   outsiders=$(printf '%s\n' "$fpm_sites" | grep -v 'GameBoostService\.kt' || true)
   if [ -n "$outsiders" ]; then
@@ -44,7 +44,8 @@ fi
 
 # 2. Visibilidad: 2 matches (show+hide del observer de proyección)
 vis_sites=$(grep -rnE 'FloatingPanelManager\.getInstance\([^)]*\)\.(show|hide)\(' "$ROOT" 2>/dev/null \
-  | grep -vE ':[0-9]+:[[:space:]]*(//|\*)' || true)
+  | grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
+  | grep -vE ':[0-9]+:[^"]*".*FloatingPanelManager\.getInstance.*"' || true)
 vis_count=0
 if [ -n "$vis_sites" ]; then
   vis_count=$(printf '%s\n' "$vis_sites" | grep -cE '.')

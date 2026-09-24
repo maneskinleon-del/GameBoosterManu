@@ -123,6 +123,16 @@ echo '// FloatingPanelManager.getInstance(ctx).destroy() — NO USAR (comentario
   > "$TMP/ov4/MainActivity.kt"
 expect "OV-POS2 comentario mencionando el FPM -> exit 0" 0 bash "$OVERLAY_GATE" "$TMP/ov4"
 
+# OV-POS3 (PR4): un STRING LITERAL que menciona el FPM no debe disparar (ej: log o mensaje de error)
+mkdir -p "$TMP/ov5"
+cp "$TMP/ov_base/GameBoostService.kt" "$TMP/ov5/GameBoostService.kt"
+echo 'val msg = "No uses FloatingPanelManager.getInstance(ctx).show() aquí"' \
+  > "$TMP/ov5/MainActivity.kt"
+expect "OV-POS3 string literal mencionando el FPM -> exit 0" 0 bash "$OVERLAY_GATE" "$TMP/ov5"
+
+# A4 (PR4): el manifest DEBE tener android:allowBackup="false"
+expect "A4 manifest allowBackup false -> exit 0" 0 grep -q 'android:allowBackup="false"' "$REPO_ROOT/app/src/main/AndroidManifest.xml"
+
 echo "-------------------------------------------"
 echo "gate_selftest: $pass PASS / $fail FAIL"
 [ "$fail" -eq 0 ]

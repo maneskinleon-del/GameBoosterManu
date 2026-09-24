@@ -389,7 +389,10 @@ class BoostSessionManagerTest {
         )
         assertNull("v1 debe ser rechazado", store.load())
         assertFalse("archivo legacy borrado", storeFile.exists())
-        assertTrue("evidencia preservada como .corrupt", File(tmp.root, "boost_session.json.corrupt").exists())
+        val corruptFiles = tmp.root.listFiles()?.filter {
+            it.name.startsWith("boost_session.json.corrupt.")
+        }.orEmpty()
+        assertTrue("evidencia preservada como .corrupt.<ts>", corruptFiles.isNotEmpty())
         // Recovery sobre store purgado: sin residuos y SIN re-aplicar los valores
         // del snapshot legacy (device nunca seeded → el valor legacy "1" NO debe aparecer)
         assertTrue(mgr.recoverIfNeeded())

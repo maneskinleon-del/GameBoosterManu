@@ -372,6 +372,34 @@ class BoostSessionManager(
     }
 
     /**
+     * PR4 (runtime check, WARN-only): post-hoc batch que detecta por AUSENCIA.
+     * Después del apply (llamado desde el settle Job, cuando los writers asíncronos
+     * ya tuvieron 8 s para commitear sus appliedValue), revisa el commit vigente:
+     * toda key DINÁMICA (BoostKeys.appliedValueOf == null) con appliedValue == null
+     * es un writer que escribió fuera del funnel o un batch incompleto → Caso B
+     * espurio en el próximo restore. Keys con valor estático en la tabla se
+     * EXCLUYEN: su restore se verifica igual (Caso A) aunque nadie las haya
+     * registrado — registrarlas sería ruido, no bug.
+     * WARN-only por diseño (auditor Q1): strict vendrá tras convergencia en device.
+     */
+    fun auditUnrecordedDynamicKeys() {
+        val session = store.load() ?: return
+        if (session.state !in ACTIVE_STATES) return
+        val orphans = session.baseline.filter { entry ->
+            entry.appliedValue == null &&
+                BoostKeys.appliedValueOf(entry.namespace, entry.key) == null
+        }
+        if (orphans.isNotEmpty()) {
+            log(
+                "WARN", TAG,
+                "Audit: ${orphans.size} keys dinámicas sin appliedValue " +
+                    "(posible writer sin recordApplied): " +
+                    orphans.joinToString { "${it.namespace}:${it.key}" }
+            )
+        }
+    }
+
+    /**
      * PR1b (V4): variante BATCH de recordApplied para writers que aplican N keys
      * en un loop (SystemTweaks/NetworkOptimizer). Un solo load→transform→save
      * atómico en lugar de N commits con fd.sync() cada uno: reduce el I/O del
@@ -398,6 +426,19 @@ class BoostSessionManager(
      * #5 SSOT: variante para writers que disparan comandos sueltos. Parsea
      * "settings put <ns> <key> <value...>" / "settings delete <ns> <key>" y
      * graba el resultado. Otros comandos (cmd power, for/dir, sysctl) se ignoran.
+     *
+     * PR4 (nota de patrones, pedida en auditoría): reconoce EXCLUSIVAMENTE los
+     * dos patrones settings de arriba. Comandos que NO registra (por diseño):
+     *   - `echo <gov> > /sys/.../scaling_governor` (ProfileManager: gobernador no
+     *     está en BoostKeys.all → no forma parte del baseline, no se restaura)
+     *   - `cmd power set-fixed-performance-mode-enabled ...` (fuera del baseline)
+     *   - `wm density ...` (DPI: restore por servicio, no por SSOT)
+     *   - `settings put` ejecutado in-process vía Settings API (ruta de emergencia
+     *     GSM: deja appliedValue por construcción, sin pasar por aquí)
+     * Si algún día una key con comando no-settings entra al inventario (p.ej.
+     * scaling_governor para restaurar el governor al salir del juego), el funnel
+     * actual NO la capturará: quien agregue esa key debe llamar a
+     * recordApplied(ns, key, valor) a MANO en el punto del write.
      */
     fun recordAppliedCommand(command: String) {
         val parts = command.trim().split(Regex("\\s+"))

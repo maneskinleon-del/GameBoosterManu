@@ -39,7 +39,10 @@ class GameSessionManager(
     private val isAutoDetectEnabled: () -> Boolean = { true },
     private val hasExternalDevices: () -> Boolean = { false },
     private val isMsaaEnabled: () -> Boolean = { false },
-    private val checkExternalDevicesNow: suspend () -> Boolean = { false }
+    private val checkExternalDevicesNow: suspend () -> Boolean = { false },
+    // C4: proveedor de rates del panel (SystemMonitor real en producción; stub en
+    // tests). Sin esto el GSM tendría que instanciar un monitor solo para rates.
+        private val refreshRates: RefreshRateProvider = PanelRatesProvider(context),
 ) {
 
     companion object {
@@ -230,6 +233,9 @@ class GameSessionManager(
             applySettleJob = scope.launch {
                 delay(8000) // margen para que los writers asíncronos (5s/2s) completen
                 boostSession.markActiveIfApplying()
+                // PR4 (runtime check): audita que ningún writer dinámico quedó sin
+                // appliedValue (batch incompleto, funnel bypasseado en algún camino).
+                boostSession.auditUnrecordedDynamicKeys()
             }
         } else {
             Log.d(TAG, "Deactivating boost...")
@@ -586,12 +592,15 @@ class GameSessionManager(
         )
         executePrivilegedCommands(phase1Commands, tag = "HighPriority_Phase1")
 
-        // FASE 2: Refresh rate (delay 500ms)
+        // FASE 2: Refresh rate (delay 500ms) — C4: rate real del panel, no hardcode.
         delay(500)
+        val supported = refreshRates.supportedRefreshRates()
+        val peak = DisplayRates.clampRefreshRate(120f, supported)
+        val min = DisplayRates.clampRefreshRate(90f, supported)
         executePrivilegedCommands(
             listOf(
-                "settings put system peak_refresh_rate 120.0",
-                "settings put system min_refresh_rate 90.0"
+                "settings put system peak_refresh_rate $peak",
+                "settings put system min_refresh_rate $min"
             ),
             tag = "HighPriority_Phase2"
         )

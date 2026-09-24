@@ -68,11 +68,29 @@ class BoostSessionStore internal constructor(
             }
             val parsed = BoostSession.fromJson(raw)
             if (parsed == null) {
-                // Corrupto: preservar como evidencia y operar sin baseline (Caso C)
-                Log.e(TAG, "boost_session.json corrupto — preservando como .corrupt")
-                try {
-                    file.copyTo(File(file.parentFile, file.name + ".corrupt"), overwrite = true)
-                    file.delete()
+                // A6 (PR4): preservar como evidencia y operar sin baseline (Caso C).
+                // Rename atómico a .corrupt.<epoch>: no pisa una evidencia previa
+                // (cada corrupción es un archivo nuevo). Acumula: un keep-last-N
+                // es housekeeping, fuera de este PR.
+                Log.e(TAG, "boost_session.json corrupto — preservando como .corrupt.<ts> vía rename")
+                                try {
+                    val corruptFile = File(
+                        file.parentFile,
+                        "${file.name}.corrupt.${System.currentTimeMillis()}"
+                    )
+                    // Garantizar unicidad si dos corrupciones caen en el mismo milisegundo:
+                    // append un contador (práctico: forense, no importa el orden).
+                    var finalFile = corruptFile
+                    var counter = 0
+                    while (finalFile.exists()) {
+                        finalFile = File("${corruptFile.path}.$counter")
+                        counter++
+                    }
+                    if (!file.renameTo(finalFile)) {
+                        // Fallback si renameTo falla entre filesystems: copiar y borrar
+                        file.copyTo(finalFile, overwrite = true)
+                        file.delete()
+                    }
                 } catch (_: Exception) {}
             }
             return parsed
