@@ -19,6 +19,26 @@ import kotlinx.coroutines.*
  * a cambios de Activity. El overlay se muestra/oculta desde [GameBoostService]
  * cuando el boost está activo/inactivo.
  *
+ * THREADING MODEL:
+ * - isVisible:      write @Main (mainHandler.post: show/hide L124/L148); read @IO (updateMetrics L155, updateProfile L169)
+ * - floatingView:   write @Main (mainHandler.post: show/hide/destroy);    read @IO (updateMetrics L155/157, updateProfile L170)
+ * - isExpanded:     write @Main (toggleExpand L325 — fuera de post — + show/hide L125/L149); read @IO (updateMetrics L155)
+  * - currentProfile:  write @IO (profilesFlow observer→updateProfile L168); read @Main (show L120)
+ *   ⚠️ NOTA (PR #5a): KDoc de PR #13 documentó un escritor adicional (@Main,
+ *   handleProfileChange) que resultó ser dead code — ACTION_UPDATE_PROFILE nunca
+ *   se envía (cero senders en app/src/). El único writer runtime es el observer
+ *   de profilesFlow (IO). @Volatile garantiza visibilidad para el read de show().
+ *   Eliminación de handleProfileChange + onProfileChanged en PR #5a.
+ * Todos @Volatile: garantizan visibilidad cross-thread, NO atomicidad.
+ * Ningún campo requiere CAS ni read-modify-write atómico (no hay incrementos).
+ * show()/hide() serializan read+write vía mainHandler (thread confinement —
+ *   no hay race entre show() y hide()). Los otros writes (toggleExpand,
+ *   updateProfile) corren en Main/UI thread directamente, sin post.
+ * El observer de overlay-proyección (GameBoostService) lee del Flow state
+ *   (combine(isBoostActive, overlayRequest)), NO de isOverlayVisible().
+ * isOverlayVisible() y toggleVisibility() eliminados (dead code: cero callers
+ *   en app/src/). Reintroducir con @MainThread + KDoc si un caller externo los necesita.
+ *
  * MEJORAS APLICADAS (Agosto 2026):
  * - WindowManager obtenida FRESCA cada vez desde ApplicationContext
  * - FLAG_NOT_TOUCH_MODAL para no bloquear toques fuera del overlay
@@ -39,10 +59,10 @@ class FloatingPanelManager(private val appContext: Context) {
     }
     
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var floatingView: View? = null
-    private var isVisible = false
-    private var isExpanded = false
-    private var currentProfile = ProfileManager.ProfileType.BALANCED
+    @Volatile private var floatingView: View? = null                          // read: updateMetrics() en IO (L155); write: show()/hide() en mainHandler
+    @Volatile private var isVisible = false                                   // read: updateMetrics()/updateProfile() en IO (L155/L169); write: show()/hide() en mainHandler
+    @Volatile private var isExpanded = false                                  // read: updateMetrics() en IO (L155); write: toggleExpand/show()/hide() en Main
+    @Volatile private var currentProfile = ProfileManager.ProfileType.BALANCED // write: updateProfile() en IO (L168 ← profilesFlow L279); read: show() en mainHandler (L120)
     
     // LayoutParams base — se clona y ajusta en show() cada vez
     private fun createBaseLayoutParams(): WindowManager.LayoutParams {
@@ -342,11 +362,4 @@ class FloatingPanelManager(private val appContext: Context) {
         } catch (_: Exception) {}
         instance = null
     }
-    
-    fun toggleVisibility() {
-        if (isVisible) hide() else show()
-    }
-
-    /** True si la vista está actualmente agregada al WindowManager. */
-    fun isOverlayVisible(): Boolean = isVisible
 }
