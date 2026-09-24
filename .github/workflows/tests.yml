@@ -18,7 +18,37 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Run JVM unit tests (73, ~1s sin emulador)
+      - name: SSOT gate — writers privilegiados con evidencia de funnel
+        run: |
+          # PR2 (auditor): gate permanente del grep de cierre de PR1. Todo archivo que
+          # contenga settings put/delete, wm density o cmd power debe integrar el funnel
+          # SSOT en su propio código (executePrivilegedCommand/recordApplied/recordBatch/
+          # collectIfSettings). Exención única: GameBoostService.restoreSavedSettings —
+          # writer DPI/pointer gateado por NS3 (awaitRecoveryComplete + sesión IDLE; DPI
+          # no pertenece al baseline). Si esa ruta migra al funnel, quitar la exención.
+          # Limitación conocida: es por ARCHIVO — un writer crudo nuevo dentro de un
+          # archivo ya evidenciado no dispara (el gate a nivel de línea pura marca como
+          # falsos positivos las llamadas multi-línea al funnel).
+          set -euo pipefail
+          PATTERN='settings put|settings delete|wm density|cmd power'
+          EVIDENCE='executePrivilegedCommand|recordApplied|recordBatch|collectIfSettings'
+          bad=""
+          while IFS= read -r f; do
+            case "$f" in
+              *GameBoostService.kt) continue ;;
+            esac
+            if ! grep -qE "$EVIDENCE" "$f"; then
+              bad+="$f"$'\n'
+            fi
+          done < <(grep -rlE "$PATTERN" app/src/main/java || true)
+          if [ -n "$bad" ]; then
+            echo "SSOT gate: archivos con writers privilegiados SIN evidencia de funnel:"
+            printf '%s' "$bad"
+            exit 1
+          fi
+          echo "SSOT gate OK — todo writer privilegiado tiene funnel o exencion documentada"
+
+      - name: Run JVM unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
       - name: Upload test report on failure

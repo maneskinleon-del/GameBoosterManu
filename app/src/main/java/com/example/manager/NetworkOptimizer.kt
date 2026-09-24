@@ -37,11 +37,17 @@ import kotlinx.coroutines.launch
  * sus 7 keys no dejaban appliedValue. El backup en RAM de 3 keys se conserva
  * como capa 2 (best-effort solo si el restore SSOT deja fallos).
  */
-class NetworkOptimizer(
-    private val repository: GameBoostRepository,
+// PR2 (test seam): ver BoostLogSink en SystemTweaks.kt — mismo patrón DI
+// (ctor primario interno para tests JVM, secundario = el de producción).
+class NetworkOptimizer internal constructor(
+    private val repository: BoostLogSink,
     /** PR1b (V4): batch de records SSOT — se invoca UNA vez por operación. */
     private val recordBatch: (entries: List<Triple<String, String, String?>>) -> Unit = {}
 ) {
+    constructor(
+        repository: GameBoostRepository,
+        recordBatch: (entries: List<Triple<String, String, String?>>) -> Unit = {}
+    ) : this(BoostLogSink { l, t, m -> repository.logAsync(l, t, m) }, recordBatch)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /** PR1b (V4): acumulador SSOT (ver SystemTweaks) — 1 commit por operación. */
