@@ -38,8 +38,10 @@ import kotlinx.coroutines.launch
  * PR2 (test seam): mínimo surface del repository facade que necesitan los managers
  * de settings (su único uso es logAsync). Permite construirlos en tests JVM sin
  * Room/Context. El ctor secundario (el de producción) adapta GameBoostRepository.
+ * internal: NO es parte de la API pública — los tests (friend compilation) lo ven,
+ * el resto del módulo solo construye managers vía el ctor secundario.
  */
-fun interface BoostLogSink {
+internal fun interface BoostLogSink {
     fun logAsync(level: String, tag: String, message: String)
 }
 
