@@ -196,4 +196,35 @@ class SsotGapPr1Test {
         mgr.markActive()
         assertTrue(mgr.currentState() != BoostSessionState.IDLE)
     }
+
+    // ── V4 (cierre auditor): el batch es medible a nivel store ─────────
+
+    @Test
+    fun `batch update es al menos 5x mas rapido que N saves secuenciales`() {
+        val base = BoostSession(
+            BoostSessionState.ACTIVE,
+            BoostKeys.all.map { (ns, key) -> BackupEntry(ns, key, "orig_$key", 1L, "bs_t") },
+            "bs_t", 1L
+        )
+        assertTrue(store.save(base))
+
+        // Secuencial: 34 commits (recordApplied por-key, pre-PR1b)
+        val t1 = System.nanoTime()
+        for ((_, _) in BoostKeys.all) {
+            assertTrue(store.save(base.copy(updatedAt = System.nanoTime())))
+        }
+        val sequentialMs = (System.nanoTime() - t1) / 1_000_000.0
+
+        // Batch: UN solo update atómico (recordAppliedBatch)
+        assertTrue(store.save(base)) // estado limpio para medir lo mismo
+        val t2 = System.nanoTime()
+        mgr.recordAppliedBatch(BoostKeys.all.map { (ns, key) -> Triple(ns, key, "v_$key") })
+        val batchedMs = (System.nanoTime() - t2) / 1_000_000.0
+
+        println("[V4-timing] secuencial=${sequentialMs}ms (34 commits) | batch=${batchedMs}ms (1 update)")
+        assertTrue(
+            "batch (${batchedMs}ms) debería ser >=5x más rápido que secuencial (${sequentialMs}ms)",
+            batchedMs < sequentialMs / 5.0
+        )
+    }
 }

@@ -334,42 +334,46 @@ class SystemTweaks(
         var successCount = 0
         var failCount = 0
 
-        for (cmd in getApplyCommands(enableMsaa)) {
-            val result = ShizukuExecutor.runCommand(cmd)
-            if (result.isSuccess) {
-                successCount++
-                // PR1-A1 + PR1b(V4): el apply alimenta la SSOT — recolectado y
-                // commiteado en UNA sola operación atómica al terminar el loop
-                // (1 fsync en vez de ~20).
-                collectIfSettings(cmd, ok = true)
-                repository.logAsync("DEBUG", "SysTweaks", "✅ OK: ${cmd.take(60)}")
+        try {
+            for (cmd in getApplyCommands(enableMsaa)) {
+                val result = ShizukuExecutor.runCommand(cmd)
+                if (result.isSuccess) {
+                    successCount++
+                    // PR1-A1 + PR1b(V4): el apply alimenta la SSOT — recolectado y
+                    // commiteado en UNA sola operación atómica al terminar el loop
+                    // (1 fsync en vez de ~20).
+                    collectIfSettings(cmd, ok = true)
+                    repository.logAsync("DEBUG", "SysTweaks", "✅ OK: ${cmd.take(60)}")
 
-                val verifyKey = extractVerifyKey(cmd)
-                if (verifyKey != null) {
-                    val verifyResult = ShizukuExecutor.runCommand("settings get global $verifyKey")
-                    val actualValue = verifyResult.getOrNull()?.trim()
-                    val expectedValue = extractExpectedValue(cmd)
-                    if (actualValue == expectedValue) {
-                        repository.logAsync("DEBUG", "SysTweaks", "🔍 Verificado: $verifyKey = $actualValue ✅")
-                    } else {
-                        repository.logAsync(
-                            "WARN", "SysTweaks",
-                            "🔍 Verificación: $verifyKey esperado=$expectedValue, actual=$actualValue ⚠️"
-                        )
+                    val verifyKey = extractVerifyKey(cmd)
+                    if (verifyKey != null) {
+                        val verifyResult = ShizukuExecutor.runCommand("settings get global $verifyKey")
+                        val actualValue = verifyResult.getOrNull()?.trim()
+                        val expectedValue = extractExpectedValue(cmd)
+                        if (actualValue == expectedValue) {
+                            repository.logAsync("DEBUG", "SysTweaks", "🔍 Verificado: $verifyKey = $actualValue ✅")
+                        } else {
+                            repository.logAsync(
+                                "WARN", "SysTweaks",
+                                "🔍 Verificación: $verifyKey esperado=$expectedValue, actual=$actualValue ⚠️"
+                            )
+                        }
                     }
+                } else {
+                    failCount++
+                    repository.logAsync(
+                        "WARN", "SysTweaks",
+                        "❌ Falló: ${cmd.take(60)} — ${result.exceptionOrNull()?.message}"
+                    )
                 }
-            } else {
-                failCount++
-                repository.logAsync(
-                    "WARN", "SysTweaks",
-                    "❌ Falló: ${cmd.take(60)} — ${result.exceptionOrNull()?.message}"
-                )
             }
+        } finally {
+            // PR1b (V4, cierre auditor): commit garantizado en CUALQUIER salida del
+            // loop (éxito, excepción o cancelación) — los records de las keys que
+            // sí aplicaron no se pierden a mitad de apply. La CancellationException
+            // (si la hay) se re-lanza sola tras completar el finally.
+            flushRecords()
         }
-
-        // PR1b (V4): commit único del apply (después de que todos los writes
-        // del loop terminaron — un registro solo se emite si su comando aplicó).
-        flushRecords()
         repository.logAsync("INFO", "SysTweaks", "Sistema: $successCount OK, $failCount fallos")
     }
 

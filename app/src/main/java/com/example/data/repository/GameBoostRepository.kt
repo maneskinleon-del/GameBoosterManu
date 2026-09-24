@@ -366,16 +366,16 @@ class GameBoostRepository private constructor(private val context: Context) {
     fun setPointerSpeed(speed: Int) {
         val raw = systemMonitor.mapPercentToRawSpeed(speed)
         repositoryScope.launch {
-            val cmd = "settings put system pointer_speed $raw"
-            val res = ShizukuExecutor.runCommand(cmd)
-            if (res.isFailure) {
-                try {
-                    android.provider.Settings.System.putInt(
-                        context.contentResolver, "pointer_speed", raw
-                    )
-                } catch (e: Exception) {
-                    addLog("WARN", "Pointer", "Fallo: ${e.message}")
-                }
+            // Cierre auditor (bypass #3): vía funnel SSOT — graba appliedValue y
+            // conserva el fallback Settings API. Antes: runCommand directo; el
+            // slider de la UI durante el boost pisaba pointer_speed fuera de la
+            // SSOT y su restore degradaba a CONFLICT (mismo vector que ADS).
+            val res = executePrivilegedCommands(
+                listOf("settings put system pointer_speed $raw"),
+                tag = "Pointer"
+            )
+            if (res.any { it.outcome !is com.example.manager.exec.ExecOutcome.EXECUTED }) {
+                addLog("WARN", "Pointer", "Fallo al aplicar pointer_speed $raw")
             }
         }
     }

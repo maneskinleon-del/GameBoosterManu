@@ -143,4 +143,16 @@ class BoostSessionStore(private val file: File) {
 
     /** Solo para tests: ruta del archivo. */
     fun path(): String = file.absolutePath
+
+    /**
+     * Solo para tests (A1): lectura cruda SINCRONIZADA bajo FILE_LOCK. El test
+     * adversarial necesita leer el commit visible para verificar integridad;
+     * sin este lock su read-back es una data race JMM y, en filesystems sin
+     * rename atómico (overlayfs/FUSE), puede observar ENOENT entre unlink y
+     * link del rename (falso positivo "archivo perdido"). El código de
+     * producción siempre lee vía load()/save(), ya bajo el lock.
+     */
+    internal fun readRawForTest(): String? = synchronized(FILE_LOCK) {
+        if (file.exists()) file.readText() else null
+    }
 }
