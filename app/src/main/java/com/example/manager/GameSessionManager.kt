@@ -11,7 +11,6 @@ import com.example.data.repository.FsmState
 import com.example.manager.exec.ExecOutcome
 import com.example.manager.exec.ExecResult
 import com.example.service.GameBoostService
-import com.example.ui.FloatingPanelManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.concurrent.ConcurrentHashMap
@@ -97,8 +96,9 @@ class GameSessionManager(
     private var manualOverrideActive = false
     private var currentProfileId: String? = null
 
-    // Callbacks para comunicación hacia afuera
-    var onProfileApplied: ((ProfileManager.ProfileType) -> Unit)? = null
+    // PR3 (W4): onProfileApplied eliminado — su único consumidor era el repository
+    // (FPM.updateProfile directo, bypass del canal del servicio). El perfil llega al
+    // overlay SOLO por el servicio (profilesFlow observer / handleProfileChange).
 
     // F4: sesión persistente (captura baseline antes del primer apply; restore verificado)
     private val boostSession: com.example.manager.boostsession.BoostSessionManager =
@@ -107,9 +107,6 @@ class GameSessionManager(
             runCommand = { cmd -> ShizukuExecutor.runCommand(cmd) },
             log = { level, tag, msg -> addLog(level, tag, msg) }
         )
-
-    // Para acceder al FloatingPanelManager desde el service
-    var floatingPanelManager: FloatingPanelManager? = null
 
     // ─── Gaming DND ───────────────────────────────────────────────
     @Volatile
@@ -738,7 +735,6 @@ class GameSessionManager(
                 ProfileManager.applyProfile(profileType)
                 // Aplicar optimizaciones de red (DNS, WiFi low-latency, BT coex)
                 networkOptimizer.apply()
-                onProfileApplied?.invoke(profileType)
             }
         }
     }

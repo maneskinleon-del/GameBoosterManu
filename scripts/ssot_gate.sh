@@ -12,7 +12,14 @@
 # Limitación conocida y documentada: un writer crudo añadido a un archivo que YA
 # contiene evidencia de funnel no dispara (gate estático por archivo; el grep de
 # línea pura marca falsos positivos en las llamadas multi-línea al funnel).
-# Cobertura runtime de ese caso: anotada para PR#4 (ShizukuExecutor.recordCheck).
+#
+# ALCANCE — leer junto con el runtime check de PR#4: este gate es una defensa
+# ESTÁTICA contra regresiones estructurales. NO verifica comportamiento en runtime.
+# La cobertura de runtime la da el check de ShizukuExecutor (PR#4): settings write
+# sin recordApplied con sesión APPLYING/ACTIVE → log WARN + fail-loud en debug.
+# Los dos mecanismos son COMPLEMENTARIOS y deben nombrarse juntos: el estático evita
+# la reintroducción de writers crudos; el runtime atrapa lo que el estático no ve
+# (writer crudo añadido a un archivo ya evidenciado / strings dinámicos).
 #
 # Auto-test: scripts/gate_selftest.sh (corre en CI tras este gate).
 set -euo pipefail

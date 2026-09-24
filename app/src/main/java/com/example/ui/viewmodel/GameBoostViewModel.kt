@@ -110,6 +110,16 @@ class GameBoostViewModel(private val repository: GameBoostRepository) : ViewMode
         }
     }
 
+    /**
+     * PR3 (overlay single-writer): la UI NO escribe FloatingPanelManager directo —
+     * publica la INTENCIÓN por el canal de proyección del repository (R1 C5) y el
+     * observador del GameBoostService (único writer de show()/hide()) la materializa.
+     */
+    fun toggleOverlay() {
+        val wantVisible = repository.overlayRequest.value ?: repository.isBoostActive.value
+        repository.setOverlayRequested(!wantVisible)
+    }
+
     fun quickClean() {
         viewModelScope.launch {
             repository.quickClean()

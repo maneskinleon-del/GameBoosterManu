@@ -21,6 +21,8 @@ class GameBoostService : Service() {
     companion object {
         private const val TAG = "GameBoostService"
         private const val NOTIFICATION_ID = 1001
+        /** PR3 (W2b): ventana para que la proyección materialice el hide antes del stop. */
+        private const val OVERLAY_HIDE_GRACE_MS = 50L
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE_PROFILE = "ACTION_UPDATE_PROFILE"
@@ -114,17 +116,10 @@ class GameBoostService : Service() {
         restoreSavedSettings()
         updateNotification("Active Profile: ${currentProfile.displayName}")
         
-        // Asegurar que el overlay se muestre si el boost ya está activo
-        // (ej: cuando el servicio es reiniciado por el watchdog)
-        try {
-            val repo = com.example.data.repository.GameBoostRepository.getInstance(this)
-            if (repo.isBoostActive.value) {
-                Log.d(TAG, "Boost already active on start, ensuring overlay visible")
-                FloatingPanelManager.getInstance(this).show()
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "handleStart: could not check boost state: ${e.message}")
-        }
+        // PR3 (W3): ELIMINADO el show() directo del arranque. Era redundante (si
+        // isBoostActive ya es true, la PRIMERA emisión del combine de la proyección
+        // — al suscribirse startMonitoring — muestra el overlay) y era un writer
+        // fuera de la proyección (rompía el único-writer R1 C5).
     }
 
     private fun restoreSavedSettings() {
@@ -176,14 +171,32 @@ class GameBoostService : Service() {
     
     private fun handleStop() {
         Log.d(TAG, "Service stopping")
-        // R1 (C5, hardening de review): el OFF manual también detiene este servicio.
-        // El hide por proyección (observador) corre en serviceScope, que muere con el
-        // servicio — si stopSelf ganara la carrera, el overlay quedaría fantasma.
-        // Este hide explícito conserva el invariante de único writer (el servicio).
+        // PR3 (W2b, DECISIÓN B — auditada): NO se llama hide() directo. Un hide()
+        // desde acá contradiría el único-writer (R1 C5) y podía dejar overlay fantasma
+        // si otro código re-mostraba el panel. Se publica la INTENCIÓN por el canal de
+        // proyección y se da una VENTANA (OVERLAY_HIDE_GRACE_MS) al observer para
+        // materializarla: el observer vive en serviceScope, que sigue vivo hasta
+        // onDestroy (posterior a stopSelf) — por eso el stop se DIFIERE, no se adelanta.
+        // Alternativas evaluadas: A (hide directo, rompe el invariante) y C (flush
+        // NonCancellable + máquina de estados, más código para una ventana de 50ms).
+        // ¿Por qué 50ms? ESTIMADO, no medido: el camino completo es una emisión de
+        // StateFlow (síncrona) + un dispatch IO→Main del collector + un post al
+        // mainHandler del FPM — 3 saltos de main thread, ~1 frame cada uno. Valores
+        // mayores (100/200ms) solo retrasan el teardown visible del servicio SIN
+        // mejorar la corrección: si 50ms no alcanzan, el modo de falla es overlay
+        // fantasma — y eso se arregla con C, no con un número más grande.
+        // ESCALADO A C si un test de dispositivo muestra overlay fantasma tras el OFF.
+        // Riesgo residual documentado (no se arregla acá): si serviceScope se cancela
+        // ANTES de que el collector procese la emisión de setOverlayRequested(false)
+        // (path anómalo: stopSelf externo, o kill del proceso entre el request y el
+        // hide), el StateFlow queda en false pero nadie lo materializa → fantasma
+        // hasta el próximo cambio de estado. En el path normal de handleStop no ocurre
+        // (scope vivo durante la ventana). Ese hueco ES la justificación de C.
         try {
-            FloatingPanelManager.getInstance(this).hide()
+            com.example.data.repository.GameBoostRepository.getInstance(this)
+                .setOverlayRequested(false)
         } catch (e: Exception) {
-            Log.w(TAG, "handleStop: overlay hide: ${e.message}")
+            Log.w(TAG, "handleStop: no se pudo publicar overlayRequest=false: ${e.message}")
         }
         // No forzar BALANCED al detener el servicio: el perfil activo lo gobierna
         // GameSessionManager (Room como única autoridad). applyProfile(BALANCED) aquí
@@ -193,8 +206,10 @@ class GameBoostService : Service() {
         // el perfil se restaura cuando corresponda (re-entry de juego o usuario).
         isRunning = false
         PreferenceManager.setServiceRunning(this, false)
-        stopForeground(true)
-        stopSelf()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            stopForeground(true)
+            stopSelf()
+        }, OVERLAY_HIDE_GRACE_MS)
         // onDestroy() se encarga de cancelar el watchdog
     }
     
@@ -302,23 +317,11 @@ class GameBoostService : Service() {
                 }
             }
 
-            // Asegurar que el panel se muestre cuando se detecta un juego, si el boost está activo
-            launch {
-                Log.d(TAG, "Starting game detection observer")
-                try {
-                    repository.simulatedGame.collect { game ->
-                        Log.d(TAG, "🎮 Simulated Game Flow emission: $game (Boost=${repository.isBoostActive.value})")
-                        if (game != null && repository.isBoostActive.value) {
-                            withContext(Dispatchers.Main) {
-                                FloatingPanelManager.getInstance(this@GameBoostService).show()
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    Log.w(TAG, "Game detection observer error: ${e.message}")
-                }
-            }
+            // PR3 (W2): observer de game-detection ELIMINADO. Era un SEGUNDO writer de
+            // show() en paralelo a la proyección (y nunca ocultaba al salir del juego,
+            // game == null). Redundante por construcción: simulateGameLaunchInternal
+            // llama toggleBoost() → isBoostActive flipa → el combine de la proyección
+            // reacciona. Ninguna dimensión nueva en el combine (decisión auditada).
 
             // Mantener viva la corrutina mientras el servicio esté activo
             try {

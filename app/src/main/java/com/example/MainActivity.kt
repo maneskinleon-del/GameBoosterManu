@@ -66,7 +66,6 @@ import com.example.data.repository.SystemMetrics
 import com.example.manager.ProfileManager
 import com.example.service.GameBoostService
 import com.example.service.UnifiedAccessibilityService
-import com.example.ui.FloatingPanelManager
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.WarningOrange
@@ -267,7 +266,7 @@ fun GameBoostApp(viewModel: GameBoostViewModel) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { FloatingPanelManager.getInstance(context).toggleVisibility() }) {
+                    IconButton(onClick = { viewModel.toggleOverlay() }) {
                         Icon(Icons.AutoMirrored.Rounded.ViewQuilt, contentDescription = "Panel", tint = MaterialTheme.colorScheme.primary)
                     }
                     IconButton(onClick = { 

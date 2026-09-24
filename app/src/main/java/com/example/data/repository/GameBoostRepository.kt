@@ -5,7 +5,6 @@ import android.content.Context
 import android.util.Log
 import com.example.data.PreferenceManager
 import com.example.data.SettingToggle
-import com.example.ui.FloatingPanelManager
 import com.example.data.database.AppDatabase
 import com.example.data.database.GameEntity
 import com.example.data.database.LogEntity
@@ -240,8 +239,10 @@ class GameBoostRepository private constructor(private val context: Context) {
                     loadGamesFromDatabase()
                     seedDefaultProfilesIfEmpty()
 
-                    // 3. Configurar callbacks entre managers
-                    setupManagerCallbacks()
+                    // 3. Callbacks entre managers: PR3 (W4) — el perfil llega al overlay
+                    // SOLO por el servicio (profilesFlow observer / handleProfileChange).
+                    // El antiguo sessionManager.onProfileApplied → FPM.updateProfile()
+                    // bypasseaba el canal del servicio y duplicaba el update — eliminado.
 
                     // 4. Iniciar monitores
                     thermalController.setup()
@@ -307,17 +308,6 @@ class GameBoostRepository private constructor(private val context: Context) {
                 // bloqueados indefinidamente. El recovery ya corrió (o falló
                 // y quedó RECOVERY_REQUIRED persistido para el próximo arranque).
                 recoveryGate.complete(Unit)
-            }
-        }
-    }
-
-    private fun setupManagerCallbacks() {
-        sessionManager.onProfileApplied = { profile ->
-            try {
-                val panel = FloatingPanelManager.getInstance(context)
-                panel.updateProfile(profile)
-            } catch (e: Exception) {
-                Log.w("GameBoostRepo", "Error updating panel: ${e.message}")
             }
         }
     }
