@@ -60,7 +60,16 @@ class SystemTweaks(
         }
     }
 
-    /** Commitea el acumulador como un único update atómico de la sesión. */
+    /**
+     * Commitea el acumulador como un único update atómico de la sesión.
+     *
+     * PR1b (auditor #6): la cadena flushRecords → recordBatch →
+     * BoostSessionManager.recordAppliedBatch → BoostSessionStore.update es 100%
+     * NO-suspend — sin puntos de suspensión, una CancellationException no puede
+     * interrumpir el commit aunque el scope esté en estado cancelling. Si esta
+     * cadena se vuelve suspend algún día, envolver la llamada del caller en
+     * withContext(NonCancellable).
+     */
     private fun flushRecords() {
         if (pendingRecords.isEmpty()) return
         recordBatch(pendingRecords.toList())
@@ -78,16 +87,23 @@ class SystemTweaks(
         if (failedKeys.isEmpty()) return
         repository.logAsync("INFO", "SysTweaks", "Restaurando ${failedKeys.size} keys fallidas desde backup RAM...")
         scope.launch {
-            val commands = getRestoreCommands()
-            for (cmd in commands) {
-                val p = cmd.trim().split(Regex("\\s+"))
-                // put: [0]=settings [1]=put [2]=global [3]=key — delete: [3]=key
-                val keyId = if (p.size > 3) "${p[2]}:${p[3]}" else continue
-                if (keyId !in failedKeys) continue
-                val result = ShizukuExecutor.runCommand(cmd)
-                collectIfSettings(cmd, ok = result.isSuccess)
+            try {
+                val commands = getRestoreCommands()
+                for (cmd in commands) {
+                    val p = cmd.trim().split(Regex("\\s+"))
+                    // put: [0]=settings [1]=put [2]=global [3]=key — delete: [3]=key
+                    val keyId = if (p.size > 3) "${p[2]}:${p[3]}" else continue
+                    if (keyId !in failedKeys) continue
+                    val result = ShizukuExecutor.runCommand(cmd)
+                    collectIfSettings(cmd, ok = result.isSuccess)
+                }
+            } finally {
+                // PR1b (auditor #6): flush garantizado en CUALQUIER salida del loop —
+                // los records de las keys ya restauradas no se pierden. clearOriginals()
+                // queda en el success path: si el restore murió a mitad, el backup RAM
+                // se conserva para un retry (la SSOT sigue siendo la autoridad).
+                flushRecords()
             }
-            flushRecords()
             clearOriginals()
         }
     }
@@ -180,14 +196,18 @@ class SystemTweaks(
     fun restore() {
         repository.logAsync("INFO", "SysTweaks", "Restaurando ajustes del sistema (completo)...")
         scope.launch {
-            val commands = getRestoreCommands()
-            for (cmd in commands) {
-                val result = ShizukuExecutor.runCommand(cmd)
-                // PR1-A1: el restore también alimenta la SSOT (delete → appliedValue null
-                // = restauración de la ausencia, semántica F4)
-                collectIfSettings(cmd, ok = result.isSuccess)
+            try {
+                val commands = getRestoreCommands()
+                for (cmd in commands) {
+                    val result = ShizukuExecutor.runCommand(cmd)
+                    // PR1-A1: el restore también alimenta la SSOT (delete → appliedValue null
+                    // = restauración de la ausencia, semántica F4)
+                    collectIfSettings(cmd, ok = result.isSuccess)
+                }
+            } finally {
+                // PR1b (auditor #6): flush garantizado en cualquier salida del loop.
+                flushRecords()
             }
-            flushRecords()
             clearOriginals()
         }
     }

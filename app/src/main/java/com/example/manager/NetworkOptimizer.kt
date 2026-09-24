@@ -57,6 +57,11 @@ class NetworkOptimizer(
         }
     }
 
+    // PR1b (auditor #6): la cadena flushRecords → recordBatch → recordAppliedBatch
+    // → BoostSessionStore.update es 100% NO-suspend — sin puntos de suspensión, una
+    // CancellationException no puede interrumpir el commit aunque el scope esté en
+    // estado cancelling. Si la cadena se vuelve suspend, envolver en
+    // withContext(NonCancellable).
     private fun flushRecords() {
         if (pendingRecords.isEmpty()) return
         recordBatch(pendingRecords.toList())
@@ -102,20 +107,25 @@ class NetworkOptimizer(
             var successCount = 0
             var failCount = 0
 
-            for (cmd in APPLY_COMMANDS) {
-                val result = ShizukuExecutor.runCommand(cmd)
-                if (result.isSuccess) {
-                    successCount++
-                    // PR1-A1 + PR1b(V4): el apply alimenta la SSOT (batch al final)
-                    collectIfSettings(cmd, ok = true)
-                    repository.logAsync("DEBUG", "NetworkOpt", "✅ OK: ${cmd.take(60)}")
-                } else {
-                    failCount++
-                    repository.logAsync("WARN", "NetworkOpt", "❌ Falló: ${cmd.take(60)} — ${result.exceptionOrNull()?.message}")
+            try {
+                for (cmd in APPLY_COMMANDS) {
+                    val result = ShizukuExecutor.runCommand(cmd)
+                    if (result.isSuccess) {
+                        successCount++
+                        // PR1-A1 + PR1b(V4): el apply alimenta la SSOT (batch al final)
+                        collectIfSettings(cmd, ok = true)
+                        repository.logAsync("DEBUG", "NetworkOpt", "✅ OK: ${cmd.take(60)}")
+                    } else {
+                        failCount++
+                        repository.logAsync("WARN", "NetworkOpt", "❌ Falló: ${cmd.take(60)} — ${result.exceptionOrNull()?.message}")
+                    }
                 }
+            } finally {
+                // PR1b (auditor #6): flush garantizado en CUALQUIER salida del loop
+                // (paridad con SystemTweaks.applyTweaks) — los records de las keys
+                // ya aplicadas no se pierden a mitad del apply.
+                flushRecords()
             }
-
-            flushRecords() // PR1b (V4): commit único del apply
             repository.logAsync("INFO", "NetworkOpt", "Red: $successCount OK, $failCount fallos")
         }
     }
@@ -190,12 +200,16 @@ class NetworkOptimizer(
 
     private fun execRestore(cmds: List<String>) {
         scope.launch {
-            for (cmd in cmds) {
-                val result = ShizukuExecutor.runCommand(cmd)
-                // PR1-A1: el restore también alimenta la SSOT (delete → null)
-                collectIfSettings(cmd, ok = result.isSuccess)
+            try {
+                for (cmd in cmds) {
+                    val result = ShizukuExecutor.runCommand(cmd)
+                    // PR1-A1: el restore también alimenta la SSOT (delete → null)
+                    collectIfSettings(cmd, ok = result.isSuccess)
+                }
+            } finally {
+                // PR1b (auditor #6): flush garantizado en cualquier salida del loop.
+                flushRecords()
             }
-            flushRecords()
 
             originalDnsMode = null
             originalDnsSpecifier = null
