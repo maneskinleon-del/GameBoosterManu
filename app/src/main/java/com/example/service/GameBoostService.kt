@@ -25,14 +25,12 @@ class GameBoostService : Service() {
         private const val OVERLAY_HIDE_GRACE_MS = 50L
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
-        const val ACTION_UPDATE_PROFILE = "ACTION_UPDATE_PROFILE"
         
         var isRunning = false
             private set
         var currentProfile = ProfileManager.ProfileType.BALANCED
             private set
             
-        var onProfileChanged: ((ProfileManager.ProfileType) -> Unit)? = null
     }
     
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -79,15 +77,6 @@ class GameBoostService : Service() {
             when (action) {
                 ACTION_START -> handleStart()
                 ACTION_STOP -> handleStop()
-                ACTION_UPDATE_PROFILE -> {
-                    val profileName = intent.getStringExtra("profile")
-                    profileName?.let {
-                        try {
-                            val profile = ProfileManager.ProfileType.valueOf(it)
-                            handleProfileChange(profile)
-                        } catch (e: Exception) {}
-                    }
-                }
             }
         }
         // START_STICKY + redelivery intent: asegura que el servicio se reinicie
@@ -211,14 +200,6 @@ class GameBoostService : Service() {
             stopSelf()
         }, OVERLAY_HIDE_GRACE_MS)
         // onDestroy() se encarga de cancelar el watchdog
-    }
-    
-    private fun handleProfileChange(profile: ProfileManager.ProfileType) {
-        currentProfile = profile
-        ProfileManager.applyProfile(profile)
-        updateNotification("Active Profile: ${profile.displayName}")
-        onProfileChanged?.invoke(profile)
-        FloatingPanelManager.getInstance(this).updateProfile(profile)
     }
     
     private fun startMonitoring() {
