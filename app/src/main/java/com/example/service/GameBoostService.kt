@@ -185,7 +185,13 @@ class GameBoostService : Service() {
         // mayores (100/200ms) solo retrasan el teardown visible del servicio SIN
         // mejorar la corrección: si 50ms no alcanzan, el modo de falla es overlay
         // fantasma — y eso se arregla con C, no con un número más grande.
-        // Escalado a C si un test de dispositivo muestra overlay fantasma tras el OFF.
+        // ESCALADO A C si un test de dispositivo muestra overlay fantasma tras el OFF.
+        // Riesgo residual documentado (no se arregla acá): si serviceScope se cancela
+        // ANTES de que el collector procese la emisión de setOverlayRequested(false)
+        // (path anómalo: stopSelf externo, o kill del proceso entre el request y el
+        // hide), el StateFlow queda en false pero nadie lo materializa → fantasma
+        // hasta el próximo cambio de estado. En el path normal de handleStop no ocurre
+        // (scope vivo durante la ventana). Ese hueco ES la justificación de C.
         try {
             com.example.data.repository.GameBoostRepository.getInstance(this)
                 .setOverlayRequested(false)
