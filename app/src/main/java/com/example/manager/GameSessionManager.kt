@@ -42,7 +42,7 @@ class GameSessionManager(
     private val checkExternalDevicesNow: suspend () -> Boolean = { false },
     // C4: proveedor de rates del panel (SystemMonitor real en producción; stub en
     // tests). Sin esto el GSM tendría que instanciar un monitor solo para rates.
-    private val refreshRates: RefreshRateProvider = SystemRatesProvider(context),
+        private val refreshRates: RefreshRateProvider = PanelRatesProvider(context),
 ) {
 
     companion object {

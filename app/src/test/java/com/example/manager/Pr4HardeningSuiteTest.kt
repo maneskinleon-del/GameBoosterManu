@@ -29,6 +29,7 @@ class Pr4HardeningSuiteTest {
 
     @Test
     fun A5_overlay_display_devices_valida_AOSP_y_rechaza_malformados() {
+        assertTrue(RestoreValueValidators.isOverlayDisplayDevices("0"))
         assertTrue(RestoreValueValidators.isOverlayDisplayDevices(""))
         assertTrue(RestoreValueValidators.isOverlayDisplayDevices("1920x1080/320"))
         assertTrue(RestoreValueValidators.isOverlayDisplayDevices("1920x1080"))
@@ -60,12 +61,18 @@ class Pr4HardeningSuiteTest {
                     assertFalse(validator("max_cached_processes=128; rm -rf"))
                 }
                 "overlay_display_devices" -> {
-                    assertTrue(validator!!("1920x1080/320"))
+                    assertTrue(validator!!("0"))
+                    assertTrue(validator("1920x1080/320"))
                     assertFalse(validator("1920x1080; id"))
                 }
-                "debug.hwui.renderer", "debug.hwui.overdraw", "debug.hwui.show_dirty_regions" -> {
+                "debug.hwui.renderer" -> {
                     assertTrue(validator!!("skiavk"))
                     assertFalse(validator("skiavk; bad"))
+                }
+                "debug.hwui.overdraw", "debug.hwui.show_dirty_regions" -> {
+                    assertTrue(validator!!("false"))
+                    assertTrue(validator("true"))
+                    assertFalse(validator("skiavk"))
                 }
                 "ble_scan_always_enabled", "wifi_scan_always_enabled", "bluetooth_disabled_profiles",
                 "disable_window_blurs", "adaptive_connected_voice_enabled",
@@ -84,8 +91,13 @@ class Pr4HardeningSuiteTest {
         }
     }
 
+    private fun corruptFilesIn(dir: File): List<File> =
+        (dir.listFiles() ?: emptyArray()).filter {
+            it.name.startsWith("boost_session.json.corrupt.")
+        }.toList()
+
     @Test
-    fun A6_load_con_archivo_corrupto_renombra_y_retorna_null() {
+    fun A6_load_con_archivo_corrupto_renombra_a_corrupt_ts_y_retorna_null() {
         val sessionFile = File(tmp.root, "boost_session.json")
         sessionFile.writeText("{ json corrupto sin schemaVersion ...")
 
@@ -93,11 +105,27 @@ class Pr4HardeningSuiteTest {
         val session = store.load()
         assertNull("Sesion corrupta no debe cargarse", session)
 
-        val corruptFile = File(tmp.root, "boost_session.json.corrupt")
-        assertTrue("Debe preservarse como .corrupt", corruptFile.exists())
-        assertEquals("{ json corrupto sin schemaVersion ...", corruptFile.readText())
+        val corruptFiles = corruptFilesIn(tmp.root)
+        assertNotNull("Debe preservarse como .corrupt.<ts>", corruptFiles)
+        assertTrue("Al menos un archivo .corrupt.<ts>", corruptFiles.isNotEmpty())
+        assertEquals(
+            "{ json corrupto sin schemaVersion ...",
+            corruptFiles.first().readText()
+        )
         assertFalse("Original no debe existir", sessionFile.exists())
         assertNull(store.load())
+    }
+
+    @Test
+    fun A6_dos_corrupciones_consecutivas_preservan_dos_archivos() {
+        val sessionFile = File(tmp.root, "boost_session.json")
+        sessionFile.writeText("{ corrupto1 ...")
+        BoostSessionStore(sessionFile).load()
+        sessionFile.writeText("{ corrupto2 ...")
+        BoostSessionStore(sessionFile).load()
+
+        val corruptFiles = corruptFilesIn(tmp.root)
+        assertTrue("Cada corrupcion es un archivo nuevo", corruptFiles.size == 2)
     }
 
     @Test

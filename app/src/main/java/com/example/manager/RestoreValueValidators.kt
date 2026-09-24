@@ -51,16 +51,19 @@ object RestoreValueValidators {
     /** Switch 0/1 (switches globales de SystemTweaks/NetworkOptimizer). */
     fun isBoolish01(v: String): Boolean = v == "0" || v == "1"
 
+    /** true/false de debug.hwui.overdraw y debug.hwui.show_dirty_regions. */
+    fun isBoolToken(v: String): Boolean = v == "true" || v == "false"
+
     /**
      * Settings.Global.overlay_display_devices (AOSP): string, NO int.
      * "" = sin overlays; "WxH[/DPI](,WxH[/DPI])*" = displays virtuales AOSP.
-     * El boost escribe "0" como valor mágico de "sin overlay" (PR4, auditor).
-     * Un isBoolish genérico rechazaría el formato AOSP legítimo durante el
-     * restore → RESTORE_FAILED espurio: de ahí este validador específico.
+     * "0" es el valor mágico que escribe el boost (SystemTweaks.apply). AOSP lo
+     * ignora, pero el restore tiene que aceptarlo: si no, appliedValue="0" cae
+     * en RESTORE_FAILED → RECOVERY_REQUIRED en el camino feliz.
+     * No se cambia el writer a "": eso reescribiría baselines ya persistidos.
      */
     fun isOverlayDisplayDevices(v: String): Boolean {
-        if (v.isEmpty()) return true
-        // Formato AOSP: WxH[/DPI](,WxH[/DPI])*
+        if (v == "0" || v.isEmpty()) return true
         return v.split(',').all { part ->
             val segs = part.split('/')
             (segs.size == 1 || segs.size == 2) &&
@@ -137,7 +140,9 @@ object RestoreValueValidators {
         "activity_manager_constants" -> ::isActivityManagerConstants
         "zen_mode" -> ::isZenMode
         "overlay_display_devices" -> ::isOverlayDisplayDevices
-        "debug.hwui.renderer", "debug.hwui.overdraw", "debug.hwui.show_dirty_regions" -> ::isIdentifierToken
+        "debug.hwui.renderer" -> ::isIdentifierToken
+        // Writers reales ponen "false"/"true", no un identificador tipo skiavk.
+        "debug.hwui.overdraw", "debug.hwui.show_dirty_regions" -> ::isBoolToken
         // TouchOptimizer (restore de backup por key)
         "pointer_speed", "long_press_timeout",
         "accessibility_display_magnification_enabled", "accessibility_autoclick_enabled" -> ::isNumeric
