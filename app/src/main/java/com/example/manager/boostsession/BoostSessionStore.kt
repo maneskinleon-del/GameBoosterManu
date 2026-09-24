@@ -68,11 +68,19 @@ class BoostSessionStore internal constructor(
             }
             val parsed = BoostSession.fromJson(raw)
             if (parsed == null) {
-                // Corrupto: preservar como evidencia y operar sin baseline (Caso C)
-                Log.e(TAG, "boost_session.json corrupto — preservando como .corrupt")
+                // A6 (PR4): preservar como evidencia y operar sin baseline (Caso C).
+                // Rename atómico a .corrupt: no se destruye el contenido por delete,
+                // la evidencia queda disponible para análisis forense y el original
+                // deja de existir sin necesidad de llamar a delete().
+                Log.e(TAG, "boost_session.json corrupto — preservando como .corrupt vía rename")
                 try {
-                    file.copyTo(File(file.parentFile, file.name + ".corrupt"), overwrite = true)
-                    file.delete()
+                    val corruptFile = File(file.parentFile, file.name + ".corrupt")
+                    if (corruptFile.exists()) corruptFile.delete()
+                    if (!file.renameTo(corruptFile)) {
+                        // Fallback si renameTo falla entre filesystems: copiar y borrar
+                        file.copyTo(corruptFile, overwrite = true)
+                        file.delete()
+                    }
                 } catch (_: Exception) {}
             }
             return parsed

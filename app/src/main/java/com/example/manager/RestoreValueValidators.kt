@@ -48,6 +48,28 @@ object RestoreValueValidators {
         v.isNotEmpty() && v.length <= MAX_VALUE_LENGTH &&
             v.all { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' }
 
+    /** Switch 0/1 (switches globales de SystemTweaks/NetworkOptimizer). */
+    fun isBoolish01(v: String): Boolean = v == "0" || v == "1"
+
+    /**
+     * Settings.Global.overlay_display_devices (AOSP): string, NO int.
+     * "" = sin overlays; "WxH[/DPI](,WxH[/DPI])*" = displays virtuales AOSP.
+     * El boost escribe "0" como valor mágico de "sin overlay" (PR4, auditor).
+     * Un isBoolish genérico rechazaría el formato AOSP legítimo durante el
+     * restore → RESTORE_FAILED espurio: de ahí este validador específico.
+     */
+    fun isOverlayDisplayDevices(v: String): Boolean {
+        if (v.isEmpty()) return true
+        // Formato AOSP: WxH[/DPI](,WxH[/DPI])*
+        return v.split(',').all { part ->
+            val segs = part.split('/')
+            (segs.size == 1 || segs.size == 2) &&
+                Regex("""^\d+x\d+$""").matches(segs[0]) &&
+                (segs.size == 1 || segs[1].toIntOrNull() != null)
+        }
+    }
+
+
     /** Modos Private DNS válidos en AOSP. */
     fun isPrivateDnsMode(v: String): Boolean = v == "off" || v == "opportunistic" || v == "hostname"
 
@@ -103,16 +125,34 @@ object RestoreValueValidators {
         v.isNotEmpty() && v.length <= MAX_VALUE_LENGTH &&
             v.all { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' || it == '=' || it == ',' || it == '/' }
 
-    /** Dominio por key conocida del inventario de restore (BoostKeys + optimizers). */
+    /** Dominio por key conocida del inventario de restore (BoostKeys + optimizers).
+     *
+     * PR4: cobertura completa — TODA key de BoostKeys.all tiene dominio específico.
+     * El test RestoreValueValidatorsPr4Test lo verifica (forKey != null para todas),
+     * así que una key agregada al inventario sin validador revienta la suite.
+     */
     fun forKey(key: String): ((String) -> Boolean)? = when (key) {
         "private_dns_mode" -> ::isPrivateDnsMode
         "private_dns_specifier" -> ::isDnsSpecifier
         "activity_manager_constants" -> ::isActivityManagerConstants
         "zen_mode" -> ::isZenMode
+        "overlay_display_devices" -> ::isOverlayDisplayDevices
         "debug.hwui.renderer", "debug.hwui.overdraw", "debug.hwui.show_dirty_regions" -> ::isIdentifierToken
         // TouchOptimizer (restore de backup por key)
         "pointer_speed", "long_press_timeout",
         "accessibility_display_magnification_enabled", "accessibility_autoclick_enabled" -> ::isNumeric
+        // Switches 0/1 (SystemTweaks/NetworkOptimizer)
+        "ble_scan_always_enabled", "wifi_scan_always_enabled", "bluetooth_disabled_profiles",
+        "disable_window_blurs", "adaptive_connected_voice_enabled",
+        "debug.sf.disable_hwc_vds", "debug.sf.disable_backpressure", "debug.sf.latch_unsignaled",
+        "auto_sync" -> ::isBoolish01
+        // Decimales (animation scales, refresh rates)
+        "window_animation_scale", "transition_animation_scale", "animator_duration_scale",
+        "peak_refresh_rate", "min_refresh_rate",
+        // Numéricos enteros/medidos (niveles, ms, velocidades, MSAA)
+        "send_action_app_error", "low_power_trigger_level", "debug.gl.msaa",
+        "wifi_watchdog_on", "wifi_scan_interval_ms", "wifi_power_save",
+        "wifi_low_latency_mode", "wifi_bt_coexistence" -> ::isNumeric
         else -> null
     }
 

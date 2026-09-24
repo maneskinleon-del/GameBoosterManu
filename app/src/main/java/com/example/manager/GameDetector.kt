@@ -300,32 +300,49 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
 
     // ─── Game detection ─────────────────────────────────────────
 
+    // PR4 (C1): Exact-match contra el inventario + set curado EXTRA_GAME_PACKAGES.
+    // La heurística de substrings anterior (p.ej. `contains("king.")`) matcheaba
+    // cualquier paquete con ese substring (p.ej. "com.something.king.app",
+    // "monkey.app"), y lo propio "tencent"/"garena"/"mapper" en apps no juego.
+    // La salida de emergencia para un juego no listado es "agregar juego
+    // manualmente" en la UI (GameBoostRepository.addGame).
+    // NOTE: las keys de DISABLE no van aquí — onForegroundAppLost/arbitraje vive en pollForegroundApp.
     internal fun isGamePackage(packageName: String): Boolean {
         if (knownGames.containsKey(packageName)) return true
-
-        return packageName.contains("freefire") ||
-                packageName.contains("garena") ||
-                packageName.contains("tencent") ||
-                packageName.contains("miHoYo") ||
-                packageName.contains("supercell") ||
-                packageName.contains("mojang") ||
-                packageName.contains("roblox") ||
-                packageName.contains("epicgames") ||
-                packageName.contains("activision") ||
-                packageName.contains("ea.gp") ||
-                packageName.contains("king.") ||
-                packageName.contains("kiloo") ||
-                packageName.contains("gg.mouse") ||
-                packageName.contains("ggmouse") ||
-                packageName.contains("mapper") ||
-                packageName.contains("flydigi") ||
-                packageName.contains("gamesir") ||
-                packageName.contains("mantis") ||
-                packageName.contains("panda") ||
-                packageName.contains("gamewolf") ||
-                packageName.contains("scrcpy") ||
-                packageName.contains("vphone")
+        return EXTRA_GAME_PACKAGES.contains(packageName)
     }
+
+    /**
+     * Paquetes de juego adicionales curados a mano (exact-match). TODO: promoción
+     * automática cuando una app cumpla 3+ heurísticas de uso sostenido en foreground
+     * es trabajo de PR futuro — esto es lista, no inferencia.
+     */
+    private val EXTRA_GAME_PACKAGES: Set<String> = setOf(
+        "com.dts.freefireth",
+        "com.dts.freefiremax",
+        "com.garena.game.kgth",
+        "com.tencent.ig",
+        "com.tencent.tmgp.pubgm",
+        "com.tencent.tmgp.sgame",
+        "com.pubg.krmobile",
+        "com.tencent.tmgp.cod",
+        "com.activision.callofduty.shooter",
+        "com.supercell.clashofclans",
+        "com.supercell.brawlstars",
+        "com.supercell.royale",
+        "com.roblox.client",
+        "com.epicgames.fortnite",
+        "com.mojang.minecraftpe",
+        "com.kiloo.subwaysurf",
+        "com.mobile.legends",
+        "com.ea.gp.fifamobile",
+        "com.miHoYo.GenshinImpact",
+        "com.king.candycrushsaga",
+        "com.garena.game.codm",
+        "com.garena.game.kgvn",
+        "com.vng.pubgmobile",
+        "com.ea.gp.apexlegendsmobilefps"
+    )
 
     private fun hasUsageStatsPermission(): Boolean {
         return try {
