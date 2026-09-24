@@ -21,6 +21,15 @@ class BoostSessionStore(private val file: File) {
         private const val TAG = "BoostSessionStore"
         private const val FILE_NAME = "boost_session.json"
 
+        /**
+         * Lock a nivel de proceso (T4B-A1): todas las instancias que apunten al
+         * mismo archivo (boost_session.json / .tmp) serializan su sección crítica
+         * entre sí. Un lock por instancia NO es suficiente: existen dos instancias
+         * productivas que comparten el mismo par de archivos (499/500 pérdidas en
+         * la reproducción controlada).
+         */
+        private val FILE_LOCK = Any()
+
         fun create(context: Context): BoostSessionStore =
             BoostSessionStore(File(context.filesDir, FILE_NAME))
 
@@ -28,11 +37,9 @@ class BoostSessionStore(private val file: File) {
             File(file.parentFile, file.name + ".tmp")
     }
 
-    private val lock = Any()
-
     /** Carga el último commit completo. Null si no existe o no parsea (→ sin baseline: no se inventa). */
     fun load(): BoostSession? {
-        synchronized(lock) {
+        synchronized(FILE_LOCK) {
             if (!file.exists()) {
                 // Commit previo interrumpido: el temp se descarta (era un estado no confirmado)
                 tempOf(file).delete()
@@ -59,7 +66,7 @@ class BoostSessionStore(private val file: File) {
 
     /** Commit atómico del estado completo. */
     fun save(session: BoostSession): Boolean {
-        synchronized(lock) {
+        synchronized(FILE_LOCK) {
             return try {
                 val tmp = tempOf(file)
                 FileOutputStream(tmp).use { fos ->
@@ -68,13 +75,12 @@ class BoostSessionStore(private val file: File) {
                     fos.fd.sync() // durabilidad antes del rename
                 }
                 if (!tmp.renameTo(file)) {
-                    // Algunos FS: rename falla si destino existe
-                    file.delete()
-                    if (!tmp.renameTo(file)) {
-                        Log.e(TAG, "rename falló — commit NO realizado")
-                        tmp.delete()
-                        return false
-                    }
+                    // Fallo real de I/O (T4B-A1): NO se destruye el último commit válido.
+                    // El fallback anterior (file.delete() + segundo renameTo) podía borrar
+                    // un commit válido si el rename fallaba por una razón transitoria.
+                    Log.e(TAG, "rename falló — commit NO realizado, preservando commit previo")
+                    tmp.delete()
+                    return false
                 }
                 true
             } catch (e: Exception) {
@@ -87,7 +93,7 @@ class BoostSessionStore(private val file: File) {
 
     /** Limpia el estado persistido (tras RESTORED verificado, o baseline huérfano). */
     fun clear(): Boolean {
-        synchronized(lock) {
+        synchronized(FILE_LOCK) {
             tempOf(file).delete()
             if (!file.exists()) return true
             return try {
