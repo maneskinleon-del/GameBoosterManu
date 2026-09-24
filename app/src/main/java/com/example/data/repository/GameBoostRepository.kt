@@ -69,8 +69,14 @@ class GameBoostRepository private constructor(private val context: Context) {
         boostSession.recordApplied(ns, key, value)
     }
     private val ramManager = RamManager(context, this)
-    private val networkOptimizer = NetworkOptimizer(this)
-    private val systemTweaks = SystemTweaks(this)
+    // PR1-A1: los writers de settings graban en la SSOT (mismo patrón que
+    // TouchOptimizer). Lambda diferido: boostSession se inicializa más abajo.
+    private val networkOptimizer = NetworkOptimizer(this) { ns, key, value ->
+        boostSession.recordApplied(ns, key, value)
+    }
+    private val systemTweaks = SystemTweaks(this) { ns, key, value ->
+        boostSession.recordApplied(ns, key, value)
+    }
     private val powerOptimizer = PowerOptimizer(this)
 
     // GameSessionManager se crea aquí para evitar UninitializedPropertyAccessException

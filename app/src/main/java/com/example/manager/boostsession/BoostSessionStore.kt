@@ -105,6 +105,42 @@ class BoostSessionStore(private val file: File) {
         }
     }
 
+    /**
+     * A3 (SSOT gap): read-modify-write ATÓMICO bajo FILE_LOCK. El transform se
+     * aplica sobre el último commit y el resultado se commite en la MISMA sección
+     * crítica — ninguna otra operación del store puede interponerse entre el
+     * load y el save. Antes, los callers hacían load→transform→save como RMW
+     * separados: dos writers concurrentes (recordApplied vs markActive) se
+     * perdían updates (último-escritor-gana a nivel de archivo completo).
+     *
+     * Si el transform devuelve la MISMA instancia (no-op), no se reescribe el
+     * archivo (evita commits triviales que solo bump-earían updatedAt).
+     * Null = no había sesión legible o el commit falló (estado previo preservado;
+     * nunca se destruye el último commit válido — ver save()).
+     */
+    fun update(transform: (BoostSession) -> BoostSession): BoostSession? {
+        synchronized(FILE_LOCK) {
+            val cur = load() ?: return null
+            val next = transform(cur)
+            if (next === cur) return cur
+            return if (save(next)) next else null
+        }
+    }
+
+    /**
+     * A3 (SSOT gap): delete condicional ATÓMICO — el predicado se evalúa sobre el
+     * último commit dentro de la misma sección crítica que el delete. Cierra la
+     * ventana del patrón load→check→clear, donde un beginApply concurrente podía
+     * crear una sesión nueva entre el check y el clear (y ser borrada).
+     * false = no se borró (no había sesión, el predicado no se cumplió o falló).
+     */
+    fun clearIf(predicate: (BoostSession) -> Boolean): Boolean {
+        synchronized(FILE_LOCK) {
+            val cur = load() ?: return false
+            return if (predicate(cur)) clear() else false
+        }
+    }
+
     /** Solo para tests: ruta del archivo. */
     fun path(): String = file.absolutePath
 }

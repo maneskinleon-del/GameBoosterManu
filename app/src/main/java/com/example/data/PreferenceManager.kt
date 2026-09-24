@@ -25,6 +25,14 @@ object PreferenceManager {
   /** Devuelve `true` si existe la clave custom_dpi guardada */
   fun isDpiForced(context: Context): Boolean =
     getPreferences(context).contains(KEY_DPI)
+
+  /**
+   * PR1-NS3: Devuelve `true` si existe la clave pointer_speed guardada.
+   * getPointerSpeed() tiene default 50 — escribir ese default sin save previo
+   * inyectaba un valor que el usuario nunca eligió en el arranque del servicio.
+   */
+  fun isPointerSpeedSaved(context: Context): Boolean =
+    getPreferences(context).contains(KEY_POINTER_SPEED)
     
     private fun getPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)

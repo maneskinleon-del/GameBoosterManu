@@ -29,11 +29,30 @@ import kotlinx.coroutines.launch
  * bloqueadas por SELinux desde shell uid 2000 (Shizuku) en kernels stock.
  * Fue removido de APPLY/RESTORE. `diagnose()` solo LEE el estado actual
  * (sysctl sin -w) para informar, no para modificar.
+ *
+ * ## PR1-A1: integración SSOT (#5)
+ * Cada `settings put/delete` exitoso se graba en la sesión persistida vía
+ * [recordApplied] (inyectado por GameBoostRepository, mismo patrón que
+ * TouchOptimizer). Antes apply()/restore() corrían fuera del funnel SSOT:
+ * sus 7 keys no dejaban appliedValue. El backup en RAM de 3 keys se conserva
+ * como capa 2 (best-effort solo si el restore SSOT deja fallos).
  */
 class NetworkOptimizer(
-    private val repository: GameBoostRepository
+    private val repository: GameBoostRepository,
+    private val recordApplied: (namespace: String, key: String, value: String?) -> Unit = { _, _, _ -> }
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /** PR1-A1: graba en la SSOT los settings put/delete exitosos (ver SystemTweaks). */
+    private fun recordIfSettings(cmd: String, ok: Boolean) {
+        if (!ok) return
+        val p = cmd.trim().split(Regex("\\s+"))
+        if (p.size >= 5 && p[0] == "settings" && p[1] == "put") {
+            recordApplied(p[2], p[3], p.drop(4).joinToString(" "))
+        } else if (p.size == 4 && p[0] == "settings" && p[1] == "delete") {
+            recordApplied(p[2], p[3], null)
+        }
+    }
 
     // Valores originales para no pisar la config del usuario al restaurar
     @Volatile
@@ -78,6 +97,8 @@ class NetworkOptimizer(
                 val result = ShizukuExecutor.runCommand(cmd)
                 if (result.isSuccess) {
                     successCount++
+                    // PR1-A1: el apply alimenta la SSOT
+                    recordIfSettings(cmd, ok = true)
                     repository.logAsync("DEBUG", "NetworkOpt", "✅ OK: ${cmd.take(60)}")
                 } else {
                     failCount++
@@ -136,7 +157,9 @@ class NetworkOptimizer(
             }
 
             for (cmd in restoreCmds) {
-                ShizukuExecutor.runCommand(cmd)
+                val result = ShizukuExecutor.runCommand(cmd)
+                // PR1-A1: el restore también alimenta la SSOT (delete → null)
+                recordIfSettings(cmd, ok = result.isSuccess)
             }
 
             originalDnsMode = null

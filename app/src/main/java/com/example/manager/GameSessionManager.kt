@@ -281,6 +281,12 @@ class GameSessionManager(
         // operacional en el apply y destruía el buffer de diagnóstico en cada boost.
 
         // Gaming DND — silenciar notificaciones durante el juego
+        // PR1-A1: el put pasa por el funnel SSOT (executePrivilegedCommands →
+        // recordAppliedCommand). Antes usaba runCommand directo: zen_mode no
+        // dejaba appliedValue y su restore dependía de originalZenMode en RAM
+        // (perdido tras process death) o de la tabla estática (fallback).
+        // La LECTURA del valor previo se mantiene fuera del funnel: un `settings
+        // get` no es un write y no debe intentar grabarse como aplicado.
         scope.launch {
             val zenResult = ShizukuExecutor.runCommand("settings get global zen_mode")
             if (zenResult.isSuccess) {
@@ -289,7 +295,10 @@ class GameSessionManager(
                     originalZenMode = mode
                 }
             }
-            ShizukuExecutor.runCommand("settings put global zen_mode 2")
+            executePrivilegedCommands(
+                listOf("settings put global zen_mode 2"),
+                tag = "GamingDND"
+            )
             addLog("INFO", "GamingDND", "🔇 No Molestar activado (zen_mode=2)")
         }
     }
@@ -385,8 +394,17 @@ class GameSessionManager(
      * triggerExitWithHysteresis): mismo orden, misma cobertura, un solo lugar que
      * mantener. `reason` etiqueta los logs (diagnóstico).
      *
-     * Orden (F4/#5): restoreVerified primero (SSOT, verificado por relectura),
-     * capa 2 de optimizers después, animaciones/power/DND al final.
+     * A2 (SSOT gap): restauración SERIALIZADA con AUTORIDAD ÚNICA POR KEY.
+     * Antes corrían en paralelo restoreVerified (SSOT) + los 3 managers con
+     * backup RAM + unos puts literales de animaciones y zen_mode sobre LAS MISMAS
+     * keys: el ganador era no determinista y podía pisar el resultado verificado
+     * (incluido el Caso B de conflicto). Ahora:
+     *   Capa 1 — SSOT (esperada): única autoridad para las keys del baseline
+     *            (incluye anims y zen_mode).
+     *   Capa 2 — backups RAM de los managers, SOLO si la SSOT dejó fallos
+     *            (best-effort). Si fue todo-OK son redundantes y dañinos: pisarían
+     *            los RESTORE_CONFLICT (cambio del usuario durante el boost).
+     *   Capa 3 — comandos NO cubiertos por el baseline (cmd power service).
      * Los extras exclusivos de la salida de juego (thermalservice reset,
      * disableGameMode, Mobilador, ram clean) quedan en el call-site de exit.
      */
@@ -395,44 +413,17 @@ class GameSessionManager(
             val report = boostSession.restoreVerified()
             if (!report.allOk) {
                 addLog("ERROR", "Optimizer", "[$reason] Restore verificado con fallos (${report.results.values.count { it == com.example.manager.boostsession.RestoreResult.RESTORE_FAILED }}) — quedará RECOVERY_REQUIRED")
+                touchOptimizer.restore()
+                networkOptimizer.restore()
+                systemTweaks.restore()
             }
-        }
-        touchOptimizer.restore()
-        networkOptimizer.restore()
-        systemTweaks.restore()
-        scope.launch {
-            val commands = listOf(
-                "settings put global window_animation_scale 1",
-                "settings put global transition_animation_scale 1",
-                "settings put global animator_duration_scale 1",
-                "cmd power set-fixed-performance-mode-enabled false",
-                "cmd power set-adaptive-power-saver-enabled true"
+            executePrivilegedCommands(
+                listOf(
+                    "cmd power set-fixed-performance-mode-enabled false",
+                    "cmd power set-adaptive-power-saver-enabled true"
+                ),
+                tag = "SettingsRestore"
             )
-            executePrivilegedCommands(commands, tag = "SettingsRestore")
-        }
-
-        // Restaurar modo No Molestar
-        scope.launch {
-            // FIX H6 (read-back): originalZenMode proviene del provider vía
-            // `settings get` (líneas 285-289). Validar dominio (numérico 0..3 AOSP)
-            // antes de interpolar. Valor inválido → NO ejecutar el put y registrar
-            // el fallo; NUNCA mutar el valor. Sin defaults inventados: el caso
-            // null/blank conserva el "0" preexistente (semántica anterior al fix).
-            val zenOriginal = originalZenMode
-            val restoreCmd: String? = when {
-                zenOriginal == null || zenOriginal.isBlank() -> "settings put global zen_mode 0"
-                RestoreValueValidators.isZenMode(zenOriginal) -> "settings put global zen_mode $zenOriginal"
-                else -> null // valor del provider no conforme al dominio → rechazar
-            }
-            if (restoreCmd != null) {
-                ShizukuExecutor.runCommand(restoreCmd)
-                addLog("INFO", "GamingDND", "🔔 No Molestar restaurado")
-            } else {
-                addLog(
-                    "ERROR", "GamingDND",
-                    "FIX H6: zen_mode original inválido ('$zenOriginal') — restore DND NO ejecutado (el baseline SSOT permanece como vía de recovery)"
-                )
-            }
             originalZenMode = null
         }
     }

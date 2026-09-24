@@ -25,11 +25,35 @@ import kotlinx.coroutines.launch
  * ## Nota
  * Estos comandos usan `settings put global` / `settings delete global`
  * y funcionan con Shizuku. No requieren root.
+ *
+ * ## PR1-A1: integración SSOT (#5)
+ * Cada `settings put/delete` exitoso se graba en la sesión persistida vía
+ * [recordApplied] (inyectado por GameBoostRepository, mismo patrón que
+ * TouchOptimizer). Antes este manager eracribe fuera del funnel SSOT: sus ~20
+ * keys no dejaban appliedValue y el restore verificado dependía de la tabla
+ * estática o degradaba a Caso B. El backup en RAM se conserva como capa 2
+ * (best-effort solo si el restore SSOT deja fallos — ver GSM.performRestore).
  */
 class SystemTweaks(
-    private val repository: GameBoostRepository
+    private val repository: GameBoostRepository,
+    private val recordApplied: (namespace: String, key: String, value: String?) -> Unit = { _, _, _ -> }
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * PR1-A1: graba en la SSOT los settings put/delete exitosos (mismo parseo
+     * que BoostSessionManager.recordAppliedCommand). Otros comandos y fallos →
+     * no-op (un fallo no aplicó nada; grabarlo mentiría sobre el estado real).
+     */
+    private fun recordIfSettings(cmd: String, ok: Boolean) {
+        if (!ok) return
+        val p = cmd.trim().split(Regex("\\s+"))
+        if (p.size >= 5 && p[0] == "settings" && p[1] == "put") {
+            recordApplied(p[2], p[3], p.drop(4).joinToString(" "))
+        } else if (p.size == 4 && p[0] == "settings" && p[1] == "delete") {
+            recordApplied(p[2], p[3], null)
+        }
+    }
 
     // Valores originales para restauración (null = no había valor / usar default)
     @Volatile private var originalBleScan: String? = null
@@ -121,7 +145,10 @@ class SystemTweaks(
         scope.launch {
             val commands = getRestoreCommands()
             for (cmd in commands) {
-                ShizukuExecutor.runCommand(cmd)
+                val result = ShizukuExecutor.runCommand(cmd)
+                // PR1-A1: el restore también alimenta la SSOT (delete → appliedValue null
+                // = restauración de la ausencia, semántica F4)
+                recordIfSettings(cmd, ok = result.isSuccess)
             }
             clearOriginals()
         }
@@ -273,6 +300,8 @@ class SystemTweaks(
             val result = ShizukuExecutor.runCommand(cmd)
             if (result.isSuccess) {
                 successCount++
+                // PR1-A1: el apply alimenta la SSOT (appliedValue = valor real aplicado)
+                recordIfSettings(cmd, ok = true)
                 repository.logAsync("DEBUG", "SysTweaks", "✅ OK: ${cmd.take(60)}")
 
                 val verifyKey = extractVerifyKey(cmd)

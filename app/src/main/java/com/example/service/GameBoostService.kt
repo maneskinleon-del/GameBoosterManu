@@ -150,8 +150,20 @@ class GameBoostService : Service() {
             try {
                 val repo = com.example.data.repository.GameBoostRepository.getInstance(this@GameBoostService)
                 repo.awaitRecoveryComplete()
+                // PR1-NS3: además del recovery gate, NO correr durante una sesión
+                // de boost activa (APPLYING/ACTIVE/RESTORING/RECOVERY_REQUIRED).
+                // Este writer escribe pointer_speed por una ruta que NO pasa por el
+                // funnel SSOT (ShizukuExecutor.runCommand directo): si corre durante
+                // el boost, el appliedValue de pointer_speed queda desactualizado y
+                // el restore degrada a Caso B (CONFLICT) — el valor original se
+                // pierde para el restore verificado.
+                val sessionState = repo.boostSession.currentState()
+                if (sessionState != com.example.manager.boostsession.BoostSessionState.IDLE) {
+                    Log.w(TAG, "restoreSavedSettings: skip — sesión de boost activa ($sessionState); los valores los aplica/restaura el boost")
+                    return@launch
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "restoreSavedSettings: no se pudo consultar recovery gate: ${e.message}")
+                Log.w(TAG, "restoreSavedSettings: no se pudo consultar gates: ${e.message}")
             }
             val savedDpi = PreferenceManager.getDpi(this@GameBoostService)
             if (savedDpi != -1) {
@@ -164,9 +176,16 @@ class GameBoostService : Service() {
                 ShizukuExecutor.runCommand("wm density $clampedDpi")
             }
             
-            val savedPointerSpeed = PreferenceManager.getPointerSpeed(this@GameBoostService)
-            Log.d(TAG, "Restoring saved Pointer Speed: $savedPointerSpeed")
-            ShizukuExecutor.runCommand("settings put system pointer_speed $savedPointerSpeed")
+            // PR1-NS3: solo escribir si el usuario guardó un valor. getPointerSpeed()
+            // tiene default 50: escribirlo sin save previo inyectaba un valor no
+            // elegido que además contaminaba el próximo baseline de pointer_speed.
+            if (PreferenceManager.isPointerSpeedSaved(this@GameBoostService)) {
+                val savedPointerSpeed = PreferenceManager.getPointerSpeed(this@GameBoostService)
+                Log.d(TAG, "Restoring saved Pointer Speed: $savedPointerSpeed")
+                ShizukuExecutor.runCommand("settings put system pointer_speed $savedPointerSpeed")
+            } else {
+                Log.d(TAG, "restoreSavedSettings: sin pointer_speed guardado — no se escribe")
+            }
         }
     }
     
