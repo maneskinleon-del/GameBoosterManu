@@ -25,11 +25,88 @@ import kotlinx.coroutines.launch
  * ## Nota
  * Estos comandos usan `settings put global` / `settings delete global`
  * y funcionan con Shizuku. No requieren root.
+ *
+ * ## PR1-A1: integración SSOT (#5)
+ * Cada `settings put/delete` exitoso se graba en la sesión persistida vía
+ * [recordBatch] (inyectado por GameBoostRepository → recordAppliedBatch).
+ * Antes este manager escribía fuera del funnel SSOT: sus ~20 keys no dejaban
+ * appliedValue y el restore verificado dependía de la tabla estática o
+ * degradaba a Caso B. El backup en RAM se conserva como capa 2 (best-effort
+ * per-key solo si el restore SSOT deja fallos — ver GSM.performRestore).
  */
 class SystemTweaks(
-    private val repository: GameBoostRepository
+    private val repository: GameBoostRepository,
+    /** PR1b (V4): batch de records SSOT — se invoca UNA vez por operación. */
+    private val recordBatch: (entries: List<Triple<String, String, String?>>) -> Unit = {}
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * PR1b (V4): acumulador SSOT — cada operación (apply o restore) recolecta
+     * los settings put/delete exitosos y los commitea en UNA sola llamada
+     * atómica (recordAppliedBatch: 1 load+fsync+rename en vez de N). Solo se
+     * toca desde las coroutines de apply/restore de ESTA instancia (sin carrera).
+     */
+    private val pendingRecords = mutableListOf<Triple<String, String, String?>>()
+
+    /** Recolecta (sin commitear) los settings put/delete exitosos. */
+    private fun collectIfSettings(cmd: String, ok: Boolean) {
+        if (!ok) return
+        val p = cmd.trim().split(Regex("\\s+"))
+        if (p.size >= 5 && p[0] == "settings" && p[1] == "put") {
+            pendingRecords.add(Triple(p[2], p[3], p.drop(4).joinToString(" ")))
+        } else if (p.size == 4 && p[0] == "settings" && p[1] == "delete") {
+            pendingRecords.add(Triple(p[2], p[3], null))
+        }
+    }
+
+    /**
+     * Commitea el acumulador como un único update atómico de la sesión.
+     *
+     * PR1b (auditor #6): la cadena flushRecords → recordBatch →
+     * BoostSessionManager.recordAppliedBatch → BoostSessionStore.update es 100%
+     * NO-suspend — sin puntos de suspensión, una CancellationException no puede
+     * interrumpir el commit aunque el scope esté en estado cancelling. Si esta
+     * cadena se vuelve suspend algún día, envolver la llamada del caller en
+     * withContext(NonCancellable).
+     */
+    private fun flushRecords() {
+        if (pendingRecords.isEmpty()) return
+        recordBatch(pendingRecords.toList())
+        pendingRecords.clear()
+    }
+
+    /**
+     * PR1b (V3): restore per-key — SOLO las keys con RESTORE_FAILED de la SSOT se
+     * re-escriben desde el backup RAM. Antes del PR1 se restauraba todo; tras el
+     * PR1 (fallback por manager completo) se habrían pisado veredictos SSOT sanos.
+     * Las keys pedidas que NO están en este backup se ignoran (no son de este
+     * manager; quien corresponda las cubrirá).
+     */
+    fun restoreOnly(failedKeys: Set<String>) {
+        if (failedKeys.isEmpty()) return
+        repository.logAsync("INFO", "SysTweaks", "Restaurando ${failedKeys.size} keys fallidas desde backup RAM...")
+        scope.launch {
+            try {
+                val commands = getRestoreCommands()
+                for (cmd in commands) {
+                    val p = cmd.trim().split(Regex("\\s+"))
+                    // put: [0]=settings [1]=put [2]=global [3]=key — delete: [3]=key
+                    val keyId = if (p.size > 3) "${p[2]}:${p[3]}" else continue
+                    if (keyId !in failedKeys) continue
+                    val result = ShizukuExecutor.runCommand(cmd)
+                    collectIfSettings(cmd, ok = result.isSuccess)
+                }
+            } finally {
+                // PR1b (auditor #6): flush garantizado en CUALQUIER salida del loop —
+                // los records de las keys ya restauradas no se pierden. clearOriginals()
+                // queda en el success path: si el restore murió a mitad, el backup RAM
+                // se conserva para un retry (la SSOT sigue siendo la autoridad).
+                flushRecords()
+            }
+            clearOriginals()
+        }
+    }
 
     // Valores originales para restauración (null = no había valor / usar default)
     @Volatile private var originalBleScan: String? = null
@@ -119,9 +196,17 @@ class SystemTweaks(
     fun restore() {
         repository.logAsync("INFO", "SysTweaks", "Restaurando ajustes del sistema (completo)...")
         scope.launch {
-            val commands = getRestoreCommands()
-            for (cmd in commands) {
-                ShizukuExecutor.runCommand(cmd)
+            try {
+                val commands = getRestoreCommands()
+                for (cmd in commands) {
+                    val result = ShizukuExecutor.runCommand(cmd)
+                    // PR1-A1: el restore también alimenta la SSOT (delete → appliedValue null
+                    // = restauración de la ausencia, semántica F4)
+                    collectIfSettings(cmd, ok = result.isSuccess)
+                }
+            } finally {
+                // PR1b (auditor #6): flush garantizado en cualquier salida del loop.
+                flushRecords()
             }
             clearOriginals()
         }
@@ -269,35 +354,46 @@ class SystemTweaks(
         var successCount = 0
         var failCount = 0
 
-        for (cmd in getApplyCommands(enableMsaa)) {
-            val result = ShizukuExecutor.runCommand(cmd)
-            if (result.isSuccess) {
-                successCount++
-                repository.logAsync("DEBUG", "SysTweaks", "✅ OK: ${cmd.take(60)}")
+        try {
+            for (cmd in getApplyCommands(enableMsaa)) {
+                val result = ShizukuExecutor.runCommand(cmd)
+                if (result.isSuccess) {
+                    successCount++
+                    // PR1-A1 + PR1b(V4): el apply alimenta la SSOT — recolectado y
+                    // commiteado en UNA sola operación atómica al terminar el loop
+                    // (1 fsync en vez de ~20).
+                    collectIfSettings(cmd, ok = true)
+                    repository.logAsync("DEBUG", "SysTweaks", "✅ OK: ${cmd.take(60)}")
 
-                val verifyKey = extractVerifyKey(cmd)
-                if (verifyKey != null) {
-                    val verifyResult = ShizukuExecutor.runCommand("settings get global $verifyKey")
-                    val actualValue = verifyResult.getOrNull()?.trim()
-                    val expectedValue = extractExpectedValue(cmd)
-                    if (actualValue == expectedValue) {
-                        repository.logAsync("DEBUG", "SysTweaks", "🔍 Verificado: $verifyKey = $actualValue ✅")
-                    } else {
-                        repository.logAsync(
-                            "WARN", "SysTweaks",
-                            "🔍 Verificación: $verifyKey esperado=$expectedValue, actual=$actualValue ⚠️"
-                        )
+                    val verifyKey = extractVerifyKey(cmd)
+                    if (verifyKey != null) {
+                        val verifyResult = ShizukuExecutor.runCommand("settings get global $verifyKey")
+                        val actualValue = verifyResult.getOrNull()?.trim()
+                        val expectedValue = extractExpectedValue(cmd)
+                        if (actualValue == expectedValue) {
+                            repository.logAsync("DEBUG", "SysTweaks", "🔍 Verificado: $verifyKey = $actualValue ✅")
+                        } else {
+                            repository.logAsync(
+                                "WARN", "SysTweaks",
+                                "🔍 Verificación: $verifyKey esperado=$expectedValue, actual=$actualValue ⚠️"
+                            )
+                        }
                     }
+                } else {
+                    failCount++
+                    repository.logAsync(
+                        "WARN", "SysTweaks",
+                        "❌ Falló: ${cmd.take(60)} — ${result.exceptionOrNull()?.message}"
+                    )
                 }
-            } else {
-                failCount++
-                repository.logAsync(
-                    "WARN", "SysTweaks",
-                    "❌ Falló: ${cmd.take(60)} — ${result.exceptionOrNull()?.message}"
-                )
             }
+        } finally {
+            // PR1b (V4, cierre auditor): commit garantizado en CUALQUIER salida del
+            // loop (éxito, excepción o cancelación) — los records de las keys que
+            // sí aplicaron no se pierden a mitad de apply. La CancellationException
+            // (si la hay) se re-lanza sola tras completar el finally.
+            flushRecords()
         }
-
         repository.logAsync("INFO", "SysTweaks", "Sistema: $successCount OK, $failCount fallos")
     }
 

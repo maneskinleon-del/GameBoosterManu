@@ -72,9 +72,14 @@ class BoostSessionStoreConcurrencyA1Test {
      * .tmp leftover (firma de la carrera: rename sobre tmp ajeno).
      */
     private fun assertOneIntactSession(context: String): String {
-        assertTrue("$context: el archivo debe existir (sin pérdidas)", file.exists())
-        val raw = file.readText()
-        val parsed = BoostSession.fromJson(raw)
+        // Fix flake (bisect 0/15 aislado vs 1/12 en par): el read-back ANTES era
+        // file.readText() crudo — data race JMM (lectura sin sincronizar de datos
+        // escritos por otro thread) y, en FS sin rename atómico (overlay/FUSE de
+        // /tmp en sandbox), ventana ENOENT entre unlink y link → falso positivo.
+        // Leer bajo FILE_LOCK es el protocolo correcto de observación.
+        val raw = sA.readRawForTest()
+        assertTrue("$context: el archivo debe existir (sin pérdidas)", raw != null)
+        val parsed = BoostSession.fromJson(raw!!)
         assertNotNull("$context: JSON debe parsear como BoostSession íntegra (sin truncamiento): \"$raw\"", parsed)
         val session = parsed!!
         val writer = session.sessionId.substringBefore('#')

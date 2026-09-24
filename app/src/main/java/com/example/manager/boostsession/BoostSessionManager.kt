@@ -281,12 +281,16 @@ class BoostSessionManager(
      * en producción beginApply persiste APPLYING, se tolera por robustez).
      */
     fun markActive() {
-        val cur = store.load() ?: return
-        if (cur.state != BoostSessionState.APPLYING && cur.state != BoostSessionState.BASELINE_CAPTURED) {
-            log("WARN", TAG, "markActive ignorado: estado=${cur.state} no es APPLYING (R1 C4: evita zombie RESTORED→ACTIVE)")
-            return
+        // A3: transición atómica bajo FILE_LOCK (update) — cierra la ventana
+        // load→check→save donde un recordApplied concurrente se perdía al ser
+        // pisado por el save de esta función (RMW separados).
+        store.update { cur ->
+            if (cur.state != BoostSessionState.APPLYING && cur.state != BoostSessionState.BASELINE_CAPTURED) {
+                log("WARN", TAG, "markActive ignorado: estado=${cur.state} no es APPLYING (R1 C4: evita zombie RESTORED→ACTIVE)")
+                return@update cur // no-op (misma instancia): el store no reescribe
+            }
+            cur.copy(state = BoostSessionState.ACTIVE, updatedAt = System.currentTimeMillis())
         }
-        store.save(cur.copy(state = BoostSessionState.ACTIVE, updatedAt = System.currentTimeMillis()))
     }
 
     /**
@@ -309,13 +313,42 @@ class BoostSessionManager(
      * al fallback estático (comportamiento pre-#5), nunca corrompe el baseline.
      */
     fun recordApplied(namespace: String, key: String, value: String?) {
-        val cur = store.load() ?: return
-        if (cur.state !in ACTIVE_STATES) return
-        if (cur.baseline.none { it.namespace == namespace && it.key == key }) return
-        val updated = cur.baseline.map { e ->
-            if (e.namespace == namespace && e.key == key) e.copy(appliedValue = value) else e
+        // A3: RMW atómico (update) — el record de un writer ya no puede perderse
+        // por interleave con markActive u otro recordApplied (antes: load→map→save
+        // separados, último-escritor-gana a nivel de archivo completo).
+        store.update { cur ->
+            if (cur.state !in ACTIVE_STATES) return@update cur // no-op
+            if (cur.baseline.none { it.namespace == namespace && it.key == key }) return@update cur // no-op
+            cur.copy(
+                baseline = cur.baseline.map { e ->
+                    if (e.namespace == namespace && e.key == key) e.copy(appliedValue = value) else e
+                },
+                updatedAt = System.currentTimeMillis()
+            )
         }
-        store.save(cur.copy(baseline = updated, updatedAt = System.currentTimeMillis()))
+    }
+
+    /**
+     * PR1b (V4): variante BATCH de recordApplied para writers que aplican N keys
+     * en un loop (SystemTweaks/NetworkOptimizer). Un solo load→transform→save
+     * atómico en lugar de N commits con fd.sync() cada uno: reduce el I/O del
+     * apply de ~27 fsyncs a 1, sin perder atomicidad ni mezclar estados.
+     * Entradas de keys fuera del baseline → ignoradas (no-op, igual que recordApplied).
+     */
+    fun recordAppliedBatch(entries: List<Triple<String, String, String?>>) {
+        if (entries.isEmpty()) return
+        store.update { cur ->
+            if (cur.state !in ACTIVE_STATES) return@update cur // no-op
+            val requested = entries.mapTo(mutableSetOf()) { "${it.first}:${it.second}" }
+            if (cur.baseline.none { "${it.namespace}:${it.key}" in requested }) return@update cur
+            val byId = entries.associate { "${it.first}:${it.second}" to it.third }
+            cur.copy(
+                baseline = cur.baseline.map { e ->
+                    byId["${e.namespace}:${e.key}"]?.let { v -> e.copy(appliedValue = v) } ?: e
+                },
+                updatedAt = System.currentTimeMillis()
+            )
+        }
     }
 
     /**
@@ -475,16 +508,24 @@ class BoostSessionManager(
         }
 
         if (allOk) {
-            val s = store.load()
-            if (s != null) {
-                store.save(s.copy(state = BoostSessionState.RESTORED, updatedAt = System.currentTimeMillis()))
+            // A3: confirmación RESTORED atómica — solo si el archivo sigue siendo
+            // esta sesión en RESTORING. Antes: load→save separados permitían que un
+            // recordApplied tardío de un writer (entre el load y el save) fuese
+            // pisado por el copy(state=RESTORED) con baseline viejo.
+            store.update { s ->
+                if (s.sessionId == restoreSessionId && s.state == BoostSessionState.RESTORING) {
+                    s.copy(state = BoostSessionState.RESTORED, updatedAt = System.currentTimeMillis())
+                } else {
+                    log("WARN", TAG, "Sesión cambió durante restore-commit — no se marca RESTORED (sesión vigente preservada)")
+                    s // no-op (misma instancia): la sesión vigente queda intacta
+                }
             }
             log("INFO", TAG, "Restore verificado: ${results.size} keys (${results.values.count { it == RestoreResult.RESTORE_VERIFIED }} restauradas, ${results.values.count { it == RestoreResult.RESTORE_SKIPPED }} ya-ok, ${results.values.count { it == RestoreResult.RESTORE_CONFLICT }} conflictos conservados)")
         } else {
-            val s = store.load()
-            if (s != null) {
-                store.save(s.copy(state = BoostSessionState.RECOVERY_REQUIRED, updatedAt = System.currentTimeMillis()))
-            }
+            // Degradación a RECOVERY_REQUIRED: incondicional sobre la sesión vigente
+            // (si otra sesión la reemplazó, esa queda en su estado propio — el update
+            // solo baja el flag persistente; el estado de la sesión nueva lo gobierna su propio ciclo).
+            store.update { s -> s.copy(state = BoostSessionState.RECOVERY_REQUIRED, updatedAt = System.currentTimeMillis()) }
             log("ERROR", TAG, "Restore con $failed fallos ($readFailures de lectura) — RECOVERY_REQUIRED persiste")
         }
         RestoreReport(results, allOk)
@@ -517,17 +558,18 @@ class BoostSessionManager(
                 log("WARN", TAG, "Recovery requerido (estado al morir: ${session.state}) — restaurando baseline de ${session.baseline.size} keys")
                 val report = restoreVerified()
                 if (report.allOk) {
-                    // FIX Race 4.D: solo limpiar si el archivo sigue siendo la
-                    // sesión que este recovery restauró (id + RESTORED). Si cambió
-                    // (nuevo apply concurrente), la sesión vigente permanece.
-                    val stillMine = store.load()?.let { s ->
+                    // FIX Race 4.D + A3: limpieza atómica condicional — el archivo se
+                    // borra SOLO si sigue siendo esta sesión en RESTORED, dentro de la
+                    // MISMA sección crítica. Antes: load→check→clear separados dejaban
+                    // una ventana donde un beginApply concurrente creaba una sesión
+                    // nueva que luego era borrada por este clear.
+                    val cleared = store.clearIf { s ->
                         s.sessionId == session.sessionId && s.state == BoostSessionState.RESTORED
-                    } == true
-                    if (!stillMine) {
+                    }
+                    if (!cleared) {
                         log("WARN", TAG, "Sesión cambió durante recovery — NO se limpia; la sesión vigente permanece recuperable")
                         return@withContext false
                     }
-                    store.clear() // RESTORED confirmado y sigue siendo esta sesión → IDLE
                     log("INFO", TAG, "Recovery completo — dispositivo restaurado")
                     try { onRestored?.invoke() } catch (_: Exception) {}
                     true
