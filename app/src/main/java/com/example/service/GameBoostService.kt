@@ -179,6 +179,12 @@ class GameBoostService : Service() {
         // onDestroy (posterior a stopSelf) — por eso el stop se DIFIERE, no se adelanta.
         // Alternativas evaluadas: A (hide directo, rompe el invariante) y C (flush
         // NonCancellable + máquina de estados, más código para una ventana de 50ms).
+        // ¿Por qué 50ms? ESTIMADO, no medido: el camino completo es una emisión de
+        // StateFlow (síncrona) + un dispatch IO→Main del collector + un post al
+        // mainHandler del FPM — 3 saltos de main thread, ~1 frame cada uno. Valores
+        // mayores (100/200ms) solo retrasan el teardown visible del servicio SIN
+        // mejorar la corrección: si 50ms no alcanzan, el modo de falla es overlay
+        // fantasma — y eso se arregla con C, no con un número más grande.
         // Escalado a C si un test de dispositivo muestra overlay fantasma tras el OFF.
         try {
             com.example.data.repository.GameBoostRepository.getInstance(this)

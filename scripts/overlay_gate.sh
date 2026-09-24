@@ -12,6 +12,11 @@
 #      definición en el FPM no cuenta.
 # Uso: scripts/overlay_gate.sh [root]  · 0 ok · 1 violación · 2 root inexistente
 # Self-test: scripts/gate_selftest.sh (casos OV-*).
+#
+# ALCANCE: defensa ESTÁTICA del invariante single-writer. NO cubre runtime ni la
+# thread-safety del FPM (isVisible/floatingView leídos fuera del post a Main → W6,
+# PR dedicado). Complementa al SSOT gate: ver el bloque ALCANCE de ssot_gate.sh
+# (estático vs runtime check de PR#4) — los dos mecanismos van juntos.
 set -euo pipefail
 
 ROOT="${1:-app/src/main/java}"
