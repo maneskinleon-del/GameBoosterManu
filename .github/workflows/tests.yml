@@ -24,6 +24,9 @@ jobs:
       - name: SSOT gate self-test
         run: bash scripts/gate_selftest.sh
 
+      - name: Overlay single-writer gate (R1 C5)
+        run: bash scripts/overlay_gate.sh
+
       - name: Run JVM unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 

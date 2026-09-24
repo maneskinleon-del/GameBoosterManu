@@ -96,8 +96,9 @@ class GameSessionManager(
     private var manualOverrideActive = false
     private var currentProfileId: String? = null
 
-    // Callbacks para comunicación hacia afuera
-    var onProfileApplied: ((ProfileManager.ProfileType) -> Unit)? = null
+    // PR3 (W4): onProfileApplied eliminado — su único consumidor era el repository
+    // (FPM.updateProfile directo, bypass del canal del servicio). El perfil llega al
+    // overlay SOLO por el servicio (profilesFlow observer / handleProfileChange).
 
     // F4: sesión persistente (captura baseline antes del primer apply; restore verificado)
     private val boostSession: com.example.manager.boostsession.BoostSessionManager =
@@ -734,7 +735,6 @@ class GameSessionManager(
                 ProfileManager.applyProfile(profileType)
                 // Aplicar optimizaciones de red (DNS, WiFi low-latency, BT coex)
                 networkOptimizer.apply()
-                onProfileApplied?.invoke(profileType)
             }
         }
     }

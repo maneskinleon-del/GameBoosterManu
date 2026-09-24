@@ -70,6 +70,59 @@ mkdir -p "$TMP/limit"
 } > "$TMP/limit/AlreadyEvidenced.kt"
 expect "LIMIT archivo ya evidenciado -> exit 0 (documentado)" 0 bash "$GATE" "$TMP/limit"
 
+# ── Overlay single-writer gate (PR3, R1 C5) ──────────────────────────
+OVERLAY_GATE="$REPO_ROOT/scripts/overlay_gate.sh"
+
+# OV-CLEAN: el árbol real debe pasar (tras consolidar W1/W2/W3/W4)
+expect "OV-CLEAN arbol real -> exit 0" 0 bash "$OVERLAY_GATE" "$REPO_ROOT/app/src/main/java"
+
+# Base mock: un servicio con SOLO el observer de proyección (show+hide en 2 líneas)
+mkdir -p "$TMP/ov_base"
+cat > "$TMP/ov_base/GameBoostService.kt" <<'EOF'
+class FakeService {
+    fun projection(want: Boolean) {
+        if (want) FloatingPanelManager.getInstance(ctx).show()
+        else FloatingPanelManager.getInstance(ctx).hide()
+    }
+}
+EOF
+expect "OV-POS mock con solo la proyeccion -> exit 0" 0 bash "$OVERLAY_GATE" "$TMP/ov_base"
+
+# OV-NEG1: toggleVisibility desde la UI (el writer ciego de W1) → exit 1
+mkdir -p "$TMP/ov1"
+cp "$TMP/ov_base/GameBoostService.kt" "$TMP/ov1/GameBoostService.kt"
+echo 'class FakeActivity { fun tap() { FloatingPanelManager.getInstance(ctx).toggleVisibility() } }' \
+  > "$TMP/ov1/MainActivity.kt"
+expect "OV-NEG1 toggleVisibility en la UI -> exit 1" 1 bash "$OVERLAY_GATE" "$TMP/ov1"
+
+# OV-NEG2: show() extra fuera del servicio (el writer W3 de handleStart) → exit 1
+mkdir -p "$TMP/ov2"
+cp "$TMP/ov_base/GameBoostService.kt" "$TMP/ov2/GameBoostService.kt"
+echo 'class Extra { fun ensure() { FloatingPanelManager.getInstance(ctx).show() } }' \
+  > "$TMP/ov2/Extra.kt"
+expect "OV-NEG2 show() extra fuera del servicio -> exit 1" 1 bash "$OVERLAY_GATE" "$TMP/ov2"
+
+# OV-NEG3: show()+hide() duplicados DENTRO del servicio (el observer W2) → exit 1
+mkdir -p "$TMP/ov3"
+cat > "$TMP/ov3/GameBoostService.kt" <<'EOF'
+class FakeService {
+    fun projection(want: Boolean) {
+        if (want) FloatingPanelManager.getInstance(ctx).show()
+        else FloatingPanelManager.getInstance(ctx).hide()
+    }
+    fun secondObserver() { FloatingPanelManager.getInstance(ctx).show() }
+}
+EOF
+expect "OV-NEG3 segundo observer dentro del servicio -> exit 1" 1 bash "$OVERLAY_GATE" "$TMP/ov3"
+
+# OV-POS2: un COMENTARIO que menciona el FPM no debe disparar (regresión del falso
+# positivo cazado en el árbol real — MainActivity:133 documentaba destroy() NO USAR)
+mkdir -p "$TMP/ov4"
+cp "$TMP/ov_base/GameBoostService.kt" "$TMP/ov4/GameBoostService.kt"
+echo '// FloatingPanelManager.getInstance(ctx).destroy() — NO USAR (comentario)' \
+  > "$TMP/ov4/MainActivity.kt"
+expect "OV-POS2 comentario mencionando el FPM -> exit 0" 0 bash "$OVERLAY_GATE" "$TMP/ov4"
+
 echo "-------------------------------------------"
 echo "gate_selftest: $pass PASS / $fail FAIL"
 [ "$fail" -eq 0 ]
