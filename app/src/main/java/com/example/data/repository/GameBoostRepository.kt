@@ -240,7 +240,7 @@ class GameBoostRepository private constructor(private val context: Context) {
                     seedDefaultProfilesIfEmpty()
 
                     // 3. Callbacks entre managers: PR3 (W4) — el perfil llega al overlay
-                    // SOLO por el servicio (profilesFlow observer / handleProfileChange).
+                    // SOLO por el servicio (profilesFlow observer).
                     // El antiguo sessionManager.onProfileApplied → FPM.updateProfile()
                     // bypasseaba el canal del servicio y duplicaba el update — eliminado.
 

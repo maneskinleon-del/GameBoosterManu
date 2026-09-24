@@ -101,7 +101,7 @@ class GameSessionManager(
 
     // PR3 (W4): onProfileApplied eliminado — su único consumidor era el repository
     // (FPM.updateProfile directo, bypass del canal del servicio). El perfil llega al
-    // overlay SOLO por el servicio (profilesFlow observer / handleProfileChange).
+    // overlay SOLO por el servicio (profilesFlow observer).
 
     // F4: sesión persistente (captura baseline antes del primer apply; restore verificado)
     private val boostSession: com.example.manager.boostsession.BoostSessionManager =
