@@ -1,16 +1,10 @@
 package com.example
 
-import android.Manifest
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.view.accessibility.AccessibilityManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -50,7 +44,6 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,6 +59,7 @@ import com.example.data.repository.SystemMetrics
 import com.example.manager.ProfileManager
 import com.example.service.GameBoostService
 import com.example.service.UnifiedAccessibilityService
+import com.example.ui.permissions.PermissionManager
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.WarningOrange
@@ -78,18 +72,7 @@ private val DPI_STEPS = listOf(280, 320, 360, 400, 440, 480, 520, 560, 600)
 
 class MainActivity : ComponentActivity() {
 
-    private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
-        checkAndRequestPermissions(onlySilentCheck = true)
-        // Hallazgo #5 (shizuku-off-t1): notificar al manager que el binder de Shizuku
-        // reapareció (server reiniciado). Sin esto, _shizukuConnected queda stale y el
-        // gate de simulateGameLaunch bloquea detecciones válidas hasta reiniciar la app.
-        com.example.data.repository.GameBoostRepository
-            .getInstance(applicationContext).onShizukuBinderReceived()
-    }
-
-    private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, _ ->
-        checkAndRequestPermissions(onlySilentCheck = true)
-    }
+    private val permissionManager = PermissionManager(this)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,10 +80,13 @@ class MainActivity : ComponentActivity() {
         
         ProfileManager.init(this)
         
-        Shizuku.addBinderReceivedListener(shizukuBinderListener)
-        Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
-        
-        checkAndRequestPermissions(onlySilentCheck = false)
+        // Set callback BEFORE register — evita race donde un binder event se pierde
+        permissionManager.onPermissionStateChanged = {
+            com.example.data.repository.GameBoostRepository
+                .getInstance(applicationContext).onShizukuBinderReceived()
+        }
+        permissionManager.register()
+        permissionManager.checkAndRequest(onlySilentCheck = false)
 
         // ── Iniciar GameBoostService como foreground service ANTI-LMK ──
         // El servicio foreground con notificación protege el proceso del Low Memory Killer.
@@ -123,8 +109,7 @@ class MainActivity : ComponentActivity() {
         // PR2 (B3): este listener se registra en onCreate — sin este remove, cada
         // recreación de la Activity acumula otro callback en la lista estática de
         // Shizuku (N rechecks redundantes por evento de binder).
-        Shizuku.removeBinderReceivedListener(shizukuBinderListener)
-        Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
+        permissionManager.unregister()
         // ❌ NO destruir el overlay flotante aquí.
         // El overlay es una ventana independiente (WindowManager) que NO depende
         // del ciclo de vida de la Activity. Si la Activity es destruida por el sistema
@@ -160,7 +145,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        checkAndRequestPermissions(onlySilentCheck = true)
+        permissionManager.checkAndRequest(onlySilentCheck = true)
 
         // (d) R1 (C5): re-evaluar overlay al reabrir la app es parte de la proyección:
         // resetear el request de usuario (null) hace que el observador del servicio
@@ -186,57 +171,7 @@ class MainActivity : ComponentActivity() {
         // si el boost está activo a través de su propio monitoreo.
     }
 
-    private fun checkAndRequestPermissions(onlySilentCheck: Boolean = false) {
-        if (!Settings.canDrawOverlays(this)) {
-            if (!onlySilentCheck) {
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-                    startActivity(intent)
-                } catch (e: Exception) {}
-            }
-        }
 
-        if (Shizuku.pingBinder()) {
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                if (!onlySilentCheck) Shizuku.requestPermission(0)
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                if (!onlySilentCheck) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
-            }
-        }
-
-        // C. Solicitar exención de optimización de batería (doze whitelist / "sin
-        // restricciones" en MIUI) para que el servicio en background no sea matado.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(PowerManager::class.java)
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
-                if (!onlySilentCheck) {
-                    try {
-                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-                        intent.data = Uri.parse("package:$packageName")
-                        startActivity(intent)
-                    } catch (e: Exception) {
-                        Log.w("MainActivity", "No se pudo abrir ajustes de batería: ${e.message}")
-                    }
-                }
-            }
-        }
-    }
-
-    /** Detección robusta vía AccessibilityManager (no lee Settings.Secure por
-     *  string — evita lecturas stale en proceso en Android 8+). */
-    @Suppress("DEPRECATION")
-    fun isAccessibilityServiceEnabled(): Boolean {
-        if (com.example.service.UnifiedAccessibilityService.isServiceRunning) return true
-        val am = getSystemService(AccessibilityManager::class.java) ?: return false
-        val expected = ComponentName(this, com.example.service.UnifiedAccessibilityService::class.java)
-        return am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-            .any { it.resolveInfo.serviceInfo.packageName == expected.packageName &&
-                   it.resolveInfo.serviceInfo.name == expected.className }
-    }
 }
 
 enum class NavigationTab {
