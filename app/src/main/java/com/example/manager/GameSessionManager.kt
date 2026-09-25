@@ -36,6 +36,7 @@ class GameSessionManager(
     private val networkOptimizer: NetworkOptimizer,
     private val systemTweaks: SystemTweaks,
     private val powerOptimizer: PowerOptimizer,
+    private val boostSession: com.example.manager.boostsession.BoostSessionManager,
     private val isAutoDetectEnabled: () -> Boolean = { true },
     private val hasExternalDevices: () -> Boolean = { false },
     private val isMsaaEnabled: () -> Boolean = { false },
@@ -103,13 +104,9 @@ class GameSessionManager(
     // (FPM.updateProfile directo, bypass del canal del servicio). El perfil llega al
     // overlay SOLO por el servicio (profilesFlow observer).
 
-    // F4: sesión persistente (captura baseline antes del primer apply; restore verificado)
-    private val boostSession: com.example.manager.boostsession.BoostSessionManager =
-        com.example.manager.boostsession.BoostSessionManager(
-            store = com.example.manager.boostsession.BoostSessionStore.create(context),
-            runCommand = { cmd -> ShizukuExecutor.runCommand(cmd) },
-            log = { level, tag, msg -> addLog(level, tag, msg) }
-        )
+    // F4: sesión persistente inyectada por constructor (única instancia en el repo).
+    // El BSM usa el addLog/runCommand del repo; el onRestored callback (coherencia
+    // post-recovery) sobrevive intacto (Eje 2/D3).
 
     // ─── Gaming DND ───────────────────────────────────────────────
     @Volatile

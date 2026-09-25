@@ -79,7 +79,22 @@ class GameBoostRepository private constructor(private val context: Context) {
     }
     private val powerOptimizer = PowerOptimizer(this)
 
-    // GameSessionManager se crea aquí para evitar UninitializedPropertyAccessException
+    // F4: sesión de boost persistente (baseline + recovery tras process death)
+    // Se crea ANTES de sessionManager: el BSM es una única instancia en el
+    // repo y se inyecta a GameSessionManager por constructor (Eje 1/D3).
+    val boostSession = com.example.manager.boostsession.BoostSessionManager(
+        store = com.example.manager.boostsession.BoostSessionStore.create(context),
+        runCommand = { cmd -> com.example.manager.ShizukuExecutor.runCommand(cmd) },
+        log = { level, tag, msg -> addLog(level, tag, msg) },
+        // Coherencia post-recovery: el boost murió con el proceso — is_running
+        // también debe morir (evita que el watchdog anti-LMK lo resucite).
+        onRestored = { PreferenceManager.setServiceRunning(context, false) }
+    )
+
+    // GameSessionManager se crea aquí porque depende de los managers anteriores
+    // (touchOptimizer, ramManager, networkOptimizer, systemTweaks, powerOptimizer)
+    // y de boostSession (inyectado por constructor tras D3). El orden de declaración
+    // es intencional: cualquier manager que GSM reciba debe estar inicializado antes.
     private val sessionManager = GameSessionManager(
         context = context,
         database = database,
@@ -88,6 +103,7 @@ class GameBoostRepository private constructor(private val context: Context) {
         networkOptimizer = networkOptimizer,
         systemTweaks = systemTweaks,
         powerOptimizer = powerOptimizer,
+        boostSession = boostSession,
         isAutoDetectEnabled = { autoDetectGames.value },
         hasExternalDevices = { systemMonitor.externalDevicesConnected.value },
         isMsaaEnabled = { msaa.value },
@@ -96,16 +112,6 @@ class GameBoostRepository private constructor(private val context: Context) {
 
     // Watchdog (depende de this)
     private val watchdogManager = WatchdogManager(context, this)
-
-    // F4: sesión de boost persistente (baseline + recovery tras process death)
-    val boostSession = com.example.manager.boostsession.BoostSessionManager(
-        store = com.example.manager.boostsession.BoostSessionStore.create(context),
-        runCommand = { cmd -> com.example.manager.ShizukuExecutor.runCommand(cmd) },
-        log = { level, tag, msg -> addLog(level, tag, msg) },
-        // Coherencia post-recovery: el boost murió con el proceso — is_running
-        // también debe morir (evita que el watchdog anti-LMK lo ressucite).
-        onRestored = { PreferenceManager.setServiceRunning(context, false) }
-    )
 
     // F3B-Fix Issue 2: startup writers (ej. restoreSavedSettings del service)
     // deben esperar a que el recovery del init termine antes de escribir
