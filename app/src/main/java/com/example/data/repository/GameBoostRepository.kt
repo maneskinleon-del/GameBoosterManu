@@ -80,7 +80,12 @@ class GameBoostRepository private constructor(private val context: Context) {
     private val powerOptimizer = PowerOptimizer(this)
 
     // F4: sesión de boost persistente (baseline + recovery tras process death)
-    // Se crea ANTES de sessionManager: el BSM es una única instancia en el
+        // ServiceLauncher debe existir ANTES de boostSession: su onRestored lambda
+    // lo referencia, y recoverIfNeeded() dispara en init {} (L235).
+    // Público: MainActivity lo accede via getInstance().serviceLauncher (5c-b).
+    val serviceLauncher = com.example.service.ServiceLauncher.create(context)
+
+    // Se crea ANTÉS de sessionManager: el BSM es una única instancia en el
     // repo y se inyecta a GameSessionManager por constructor (Eje 1/D3).
     val boostSession = com.example.manager.boostsession.BoostSessionManager(
         store = com.example.manager.boostsession.BoostSessionStore.create(context),
@@ -88,7 +93,8 @@ class GameBoostRepository private constructor(private val context: Context) {
         log = { level, tag, msg -> addLog(level, tag, msg) },
         // Coherencia post-recovery: el boost murió con el proceso — is_running
         // también debe morir (evita que el watchdog anti-LMK lo resucite).
-        onRestored = { PreferenceManager.setServiceRunning(context, false) }
+        // 5c-b: ahora usa ServiceLauncher.markStopped() (único writer en recovery).
+        onRestored = { serviceLauncher.markStopped() }
     )
 
     // GameSessionManager se crea aquí porque depende de los managers anteriores
@@ -104,6 +110,7 @@ class GameBoostRepository private constructor(private val context: Context) {
         systemTweaks = systemTweaks,
         powerOptimizer = powerOptimizer,
         boostSession = boostSession,
+        serviceLauncher = serviceLauncher,
         isAutoDetectEnabled = { autoDetectGames.value },
         hasExternalDevices = { systemMonitor.externalDevicesConnected.value },
         isMsaaEnabled = { msaa.value },
@@ -240,6 +247,17 @@ class GameBoostRepository private constructor(private val context: Context) {
                 withTimeout(initTimeoutMs) {
                     // 1. Inicializar GameSessionManager
                     sessionManager.initialize()
+
+                    // R1 (C5): reset reactivo de overlayRequest al ON manual.
+                    // Reemplaza el setOverlayRequested(null) que el composable hacía
+                    // en onCheckedChange — ahora el repo limpia el estado al detectar
+                    // la transición isBoostActive: false → true, sin depender de la UI.
+                    // StateFlow ya emite valores distintos — no se necesita
+                    // distinctUntilChanged() (deprecated en StateFlow).
+                    sessionManager.isBoostActive
+                        .filter { it }
+                        .onEach { _overlayRequest.value = null }
+                        .launchIn(repositoryScope)
 
                     // 2. Cargar datos
                     loadGamesFromDatabase()

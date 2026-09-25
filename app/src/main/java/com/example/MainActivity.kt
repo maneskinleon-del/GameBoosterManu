@@ -57,7 +57,6 @@ import com.example.manager.boostsession.RestoreResult
 import com.example.data.repository.FsmState
 import com.example.data.repository.SystemMetrics
 import com.example.manager.ProfileManager
-import com.example.service.GameBoostService
 import com.example.service.UnifiedAccessibilityService
 import com.example.ui.permissions.PermissionManager
 import com.example.ui.theme.MyApplicationTheme
@@ -88,11 +87,12 @@ class MainActivity : ComponentActivity() {
         permissionManager.register()
         permissionManager.checkAndRequest(onlySilentCheck = false)
 
-        // ── Iniciar GameBoostService como foreground service ANTI-LMK ──
+                // ── Iniciar GameBoostService como foreground service ANTI-LMK ──
         // El servicio foreground con notificación protege el proceso del Low Memory Killer.
         // Se inicia siempre al abrir la app, independientemente del estado guardado.
         // Si el servicio es matado, START_REDELIVER_INTENT + watchdog lo reinician.
-        ensureGameBoostServiceRunning()
+        // 5c-b: ServiceLauncher.startIdle() reemplaza ensureGameBoostServiceRunning().
+        com.example.data.repository.GameBoostRepository.getInstance(this).serviceLauncher.startIdle()
 
         setContent {
             MyApplicationTheme {
@@ -119,29 +119,11 @@ class MainActivity : ComponentActivity() {
     }
     
     /**
-     * Inicia GameBoostService si no está ya corriendo.
-     * Es independiente de PreferenceManager.isServiceRunning() para asegurar
-     * que el servicio arranque incluso después de un crash o kill del proceso.
+     * Inicia GameBoostService como foreground service ANTI-LMK (5c-b deprecated).
+     * Reemplazado por ServiceLauncher.startIdle() — ver getInstance().serviceLauncher.
+     * Este método se mantiene removido: el guard !isRunning se hace en startIdle().
      */
-    private fun ensureGameBoostServiceRunning() {
-        try {
-            if (!com.example.service.GameBoostService.isRunning) {
-                val intent = Intent(this, com.example.service.GameBoostService::class.java)
-                // ⚠️ SIN ACTION_START. El servicio se inicia solo con la notificación
-                // (LMK protection) pero NO aplica perfiles ni restaura settings.
-                // ACTION_START se envía SOLO desde toggleBoost() cuando el usuario o
-                // la detección de juego activa el boost.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(intent)
-                } else {
-                    startService(intent)
-                }
-                Log.d("MainActivity", "🚀 GameBoostService iniciado (LMK protection, idle)")
-            }
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error al iniciar GameBoostService: ${e.message}")
-        }
-    }
+    // ensureGameBoostServiceRunning() REMOVIDO — usa serviceLauncher.startIdle()
 
     override fun onResume() {
         super.onResume()
@@ -344,27 +326,8 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
                     // (UiAutomator vía testTagsAsResourceId) y tests Compose.
                     modifier = Modifier.testTag("boost_switch"),
                     checked = isBoostActive,
-                    onCheckedChange = { 
+                    onCheckedChange = {
                         viewModel.toggleBoost()
-                        val intent = Intent(context, GameBoostService::class.java)
-                        if (!isBoostActive) {
-                            intent.action = GameBoostService.ACTION_START
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
-                            PreferenceManager.setServiceRunning(context, true)
-                            // R1 (C5): boost ON manual → seguir al boost de nuevo (un
-                            // request=false viejo no debe ocultar el overlay recién activado)
-                            com.example.data.repository.GameBoostRepository
-                                .getInstance(context).setOverlayRequested(null)
-                        } else {
-                            intent.action = GameBoostService.ACTION_STOP
-                            context.startService(intent)
-                            PreferenceManager.setServiceRunning(context, false)
-                            // R1 (C5): la UI no escribe el overlay directamente — pide
-                            // vía la proyección (el observador del servicio es el único
-                            // writer de FPM.show/hide).
-                            com.example.data.repository.GameBoostRepository
-                                .getInstance(context).setOverlayRequested(false)
-                        }
                     }
                 )
             }

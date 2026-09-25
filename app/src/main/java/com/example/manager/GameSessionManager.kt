@@ -10,7 +10,6 @@ import com.example.data.database.ProfileEntity
 import com.example.data.repository.FsmState
 import com.example.manager.exec.ExecOutcome
 import com.example.manager.exec.ExecResult
-import com.example.service.GameBoostService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.concurrent.ConcurrentHashMap
@@ -37,6 +36,7 @@ class GameSessionManager(
     private val systemTweaks: SystemTweaks,
     private val powerOptimizer: PowerOptimizer,
     private val boostSession: com.example.manager.boostsession.BoostSessionManager,
+    private val serviceLauncher: com.example.service.ServiceLauncher,
     private val isAutoDetectEnabled: () -> Boolean = { true },
     private val hasExternalDevices: () -> Boolean = { false },
     private val isMsaaEnabled: () -> Boolean = { false },
@@ -216,9 +216,8 @@ class GameSessionManager(
             }
             // B2: post-beginApply — el estado refleja un baseline YA persistido
             _isBoostActive.value = true
-            PreferenceManager.setServiceRunning(context, true)
             addLog("INFO", "Optimizer", "Boost mode: ON")
-            ensureBoostServiceRunning()
+            serviceLauncher.startBoost()
             applyBoostSettings()
             // Los optimizers lanzan sus writes en scopes propios; el estado pasa a
             // ACTIVE tras el arranque del boost. Si el proceso muere entre medio,
@@ -237,8 +236,8 @@ class GameSessionManager(
         } else {
             Log.d(TAG, "Deactivating boost...")
             _isBoostActive.value = false
-            PreferenceManager.setServiceRunning(context, false)
             addLog("INFO", "Optimizer", "Boost mode: OFF")
+            serviceLauncher.stopBoost()
             // R1 (C3): cancelar el settle pendiente ANTES de restaurar — sin esto,
             // un markActive tardío reviviría la sesión (bug evidenciado).
             applySettleJob?.cancel()
@@ -247,21 +246,9 @@ class GameSessionManager(
         }
     }
 
-    private fun ensureBoostServiceRunning() {
-        try {
-            Log.d(TAG, "ensureBoostServiceRunning: Sending ACTION_START to GameBoostService")
-            val intent = android.content.Intent(context, GameBoostService::class.java).apply {
-                action = GameBoostService.ACTION_START
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        } catch (e: Exception) {
-            addLog("WARN", "Optimizer", "No se pudo iniciar GameBoostService: ${e.message}")
-        }
-    }
+    // ensureBoostServiceRunning() REMOVIDO (5c-b): reemplazado por serviceLauncher.startBoost()
+    // El ServiceLauncher maneja pref sync + ACTION_START en un único método.
+
 
     private fun applyBoostSettings() {
         val msaaEnabled = isMsaaEnabled()
@@ -674,6 +661,11 @@ class GameSessionManager(
                     // El apagado real de power mode corre dentro de performRestore.
                     if (_isBoostActive.value) {
                         _isBoostActive.value = false
+                        // TODO(5d): pref refleja 'boost apagado', no 'service detenido'.
+                        // El service sigue vivo (LMK). El watchdog deja de monitorear hasta
+                        // que el service no se detenga realmente (handleStop). Desacoplar
+                        // 'is_running' (service lifecycle) de '_isBoostActive' (boost state)
+                        // en el split del Repository.
                         PreferenceManager.setServiceRunning(context, false)
                         addLog("INFO", "Monitor", "Boost en-app apagado (overlay oculto)")
                     }

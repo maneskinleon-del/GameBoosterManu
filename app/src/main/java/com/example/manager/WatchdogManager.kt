@@ -275,14 +275,10 @@ class WatchdogManager(
     }
 
     private fun startCoreService() {
-        val intent = Intent(context, GameBoostService::class.java).apply {
-            action = GameBoostService.ACTION_START
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
-        }
+        // Migrado a ServiceLauncher (5c-b): startBoost escribe setServiceRunning(true)
+        // + ACTION_START. El pref ya es true (el watchdog solo llama acá cuando
+        // shouldBeRunning=true, L99) — idempotente.
+        com.example.service.ServiceLauncher.create(context).startBoost()
     }
 
     fun stop() {

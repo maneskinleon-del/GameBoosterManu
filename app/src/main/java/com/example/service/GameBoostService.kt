@@ -194,6 +194,9 @@ class GameBoostService : Service() {
         // Los settings del boost los restaura BoostSession.restoreVerified();
         // el perfil se restaura cuando corresponda (re-entry de juego o usuario).
         isRunning = false
+        // idempotente: ServiceLauncher.stopBoost() ya escribió pref=false antes del intent.
+        // ESTE write es defensa en profundidad (5c-b Issue A): evita pref stale si un
+        // ACTION_STOP llega desde un path no-ServiceLauncher.
         PreferenceManager.setServiceRunning(this, false)
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             stopForeground(true)

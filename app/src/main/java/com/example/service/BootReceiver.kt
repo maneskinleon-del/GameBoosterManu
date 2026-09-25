@@ -32,15 +32,9 @@ class BootReceiver : BroadcastReceiver() {
             // Programar el watchdog para que revise en 30 segundos
             ServiceWatchdogReceiver.schedule(context)
 
-            // Intentar iniciar el servicio directamente
-            val startIntent = Intent(context, GameBoostService::class.java).apply {
-                action = GameBoostService.ACTION_START
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(startIntent)
-            } else {
-                context.startService(startIntent)
-            }
+            // Migrado a ServiceLauncher (5c-b): startBoost escribe setServiceRunning(true)
+            // + ACTION_START. Idempotente: pref ya era true desde la sesión previa.
+            com.example.service.ServiceLauncher.create(context).startBoost()
 
             Log.i(TAG, "✅ Servicio reiniciado post-boot")
         } else {
