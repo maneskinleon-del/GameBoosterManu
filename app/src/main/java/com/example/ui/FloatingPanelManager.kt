@@ -23,12 +23,11 @@ import kotlinx.coroutines.*
  * - isVisible:      write @Main (mainHandler.post: show/hide L124/L148); read @IO (updateMetrics L155, updateProfile L169)
  * - floatingView:   write @Main (mainHandler.post: show/hide/destroy);    read @IO (updateMetrics L155/157, updateProfile L170)
  * - isExpanded:     write @Main (toggleExpand L325 — fuera de post — + show/hide L125/L149); read @IO (updateMetrics L155)
-  * - currentProfile:  write @IO (profilesFlow observer→updateProfile L168); read @Main (show L120)
- *   ⚠️ NOTA (PR #5a): KDoc de PR #13 documentó un escritor adicional (@Main,
- *   handleProfileChange) que resultó ser dead code — ACTION_UPDATE_PROFILE nunca
- *   se envía (cero senders en app/src/). El único writer runtime es el observer
- *   de profilesFlow (IO). @Volatile garantiza visibilidad para el read de show().
- *   Eliminación de handleProfileChange + onProfileChanged en PR #5a.
+ * - currentProfile:  write @Main (mainHandler.post en updateProfile); read @Main (show/updateProfileDisplay L168)
+ *   ✅ W6-1 FIX (Sep 2026): updateProfile() envuelve todo en mainHandler.post {}.
+ *   El write de currentProfile YA NO es cross-thread (antes era IO→Main race).
+ *   El observer de profilesFlow (IO) llama updateProfile() que postea a Main.
+ *   @Volatile retiene por si un caller externo lee directamente sin mainHandler.
  * Todos @Volatile: garantizan visibilidad cross-thread, NO atomicidad.
  * Ningún campo requiere CAS ni read-modify-write atómico (no hay incrementos).
  * show()/hide() serializan read+write vía mainHandler (thread confinement —
@@ -184,10 +183,18 @@ class FloatingPanelManager(private val appContext: Context) {
 
     private fun Double.format(digits: Int) = "%.${digits}f".format(this)
 
+    /**
+     * Actualiza el perfil mostrado en el overlay.
+     *
+     * Thread-safety (W6-1): el write de [currentProfile] y el update de la vista
+     * se hacen SIEMPRE en Main (vía mainHandler.post), sin importar el thread
+     * del caller. Elimina el cross-thread write desde el observer de profilesFlow
+     * (IO) que existía antes del fix.
+     */
     fun updateProfile(profile: ProfileManager.ProfileType) {
-        currentProfile = profile
-        if (isVisible) {
-            floatingView?.post {
+        mainHandler.post {
+            currentProfile = profile
+            if (isVisible) {
                 updateProfileDisplay(profile, floatingView)
             }
         }
