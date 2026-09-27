@@ -20,8 +20,8 @@ import kotlinx.coroutines.*
  * cuando el boost está activo/inactivo.
  *
  * THREADING MODEL:
- * - isVisible:      write @Main (mainHandler.post: show/hide L124/L148); read @IO (updateMetrics L155, updateProfile L169)
- * - floatingView:   write @Main (mainHandler.post: show/hide/destroy);    read @IO (updateMetrics L155/157, updateProfile L170)
+ * - isVisible:      write @Main (mainHandler.post: show/hide L124/L148); read @IO (updateMetrics L155)
+ * - floatingView:   write @Main (mainHandler.post: show/hide/destroy);    read @IO (updateMetrics L155/157)
  * - isExpanded:     write @Main (toggleExpand L325 — fuera de post — + show/hide L125/L149); read @IO (updateMetrics L155)
  * - currentProfile:  write @Main (mainHandler.post en updateProfile); read @Main (show/updateProfileDisplay L168)
  *   ✅ W6-1 FIX (Sep 2026): updateProfile() envuelve todo en mainHandler.post {}.
