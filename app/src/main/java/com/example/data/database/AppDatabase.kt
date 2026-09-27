@@ -33,7 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
                         // La población inicial se maneja desde GameBoostRepository.init() como safety net.
                     }
                 })
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigrationOnDowngrade()
                 .build()
                 INSTANCE = instance
                 instance
