@@ -248,21 +248,39 @@ class GameBoostService : Service() {
 
                             // F4: durante un recovery pendiente/curso, la re-aplicación
                             // del perfil persistido pisaría el baseline que el recovery
-                            // está restaurando. Solo re-aplicar con sesión limpia.
+                            // está restaurando. Solo hacer applyProfile con sesión limpia.
+                            // El overlay display debe SIEMPRE sincronizarse con el perfil
+                            // activo persistido — verificarlo en FPM.updateProfile().
                             val sessionState = repository.boostSession.currentState()
-                            if (sessionState != com.example.manager.boostsession.BoostSessionState.IDLE) {
-                                Log.d(TAG, "Profile observer: skip re-apply (session=$sessionState)")
-                                return@collect
+                            val shouldApplyProfile = sessionState ==
+                                com.example.manager.boostsession.BoostSessionState.IDLE
+                            if (!shouldApplyProfile) {
+                                Log.d(TAG, "Profile observer: skip profile apply (session=$sessionState), " +
+                                    "syncing overlay display only")
                             }
 
-                            type?.let {
-                                if (currentProfile != it) {
-                                    Log.d(TAG, "Service: Profile changed to ${it.displayName}")
-                                    currentProfile = it
-                                    ProfileManager.applyProfile(it)
-                                    FloatingPanelManager.getInstance(this@GameBoostService).updateProfile(it)
-                                    updateNotification("Active Profile: ${it.displayName}")
+                            type?.let { profileType ->
+                                if (currentProfile != profileType) {
+                                    Log.d(TAG, "Service: Profile changed to ${profileType.displayName}")
+                                    currentProfile = profileType
+                                    // System-level writes: only when session is clean (IDLE)
+                                    if (shouldApplyProfile) {
+                                        ProfileManager.applyProfile(profileType)
+                                    }
+                                    updateNotification("Active Profile: ${profileType.displayName}")
                                 }
+                                // UI sync: ALWAYS sync overlay display with the persisted
+                                // active profile. Must be OUTSIDE the if-block because:
+                                // 1. Service's currentProfile may be pre-set via
+                                //    PreferenceManager in onCreate(), making the
+                                //    if-check false on every flow emission.
+                                // 2. FPM maintains its OWN currentProfile (defaults to
+                                //    BALANCED) that must be updated independently.
+                                // 3. During RESTORING/ACTIVE/RECOVERING states, the
+                                //    observer previously did return@collect, leaving FPM
+                                //    at BALANCED forever.
+                                FloatingPanelManager.getInstance(this@GameBoostService)
+                                    .updateProfile(profileType)
                             }
                         }
                     }
