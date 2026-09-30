@@ -76,6 +76,10 @@ class SystemMonitor(private val context: Context) {
     // Último ping medido (para no mostrar 0 antes de la primera medición)
     private var lastMeasuredPing = 0
 
+    /** Último reason de detección externa; se loguea solo cuando cambia (evita spam 5s). */
+    @Volatile
+    private var lastExternalReason: String? = null
+
     // Para actualizar métricas externas (boost state, active game, etc.)
     var getBoostActive: (() -> Boolean)? = null
     var getActiveGame: (() -> String?)? = null
@@ -307,6 +311,17 @@ class SystemMonitor(private val context: Context) {
 
     // ─── Detección de dispositivos externos ────────────────────────
 
+    /**
+     * Loggea el reason de detección externa solo cuando cambia,
+     * evitando spam de logcat cada 5s.
+     */
+    private fun logExternalReason(reason: String) {
+        if (lastExternalReason != reason) {
+            Log.d(TAG, "external detected: reason=$reason")
+            lastExternalReason = reason
+        }
+    }
+
     private suspend fun checkExternalDevices(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
@@ -314,25 +329,48 @@ class SystemMonitor(private val context: Context) {
                 val result = ShizukuExecutor.runCommand(command)
                 val output = result.getOrNull()?.lowercase() ?: ""
 
-
                 /**
-                 * Trade-off: el grep de dumpsys input incluye external: true para HIDs
-                 * virtuales (scrcpy uhid, GG Mouse). En su defecto, ps -A detecta
-                 * mappers que no reportan como HIDs (ztezscreenshot, vphone, etc.).
+                 * Trade-off: el grep de dumpsys input busca device names y flags.
+                 * scrcpy aparece con el nombre 'scrcpy' en device names (NO con
+                 * IsExternal: true). GG Mouse aparece como 'external: true'.
+                 * En su defecto, ps -A detecta mappers que no reportan como HIDs
+                 * (ztezscreenshot, vphone, etc.).
                  * La doble capa evita falsos negativos: si un mapper no aparece en
                  * dumpsys (scrcpy sin --mouse=uhid), pgrep -f lo cubre; si no hay
                  * proceso en ps -A, el primer grep lo cubre.
                  */
-                val hasInputDevice = output.contains("external: true") ||
-                        output.contains("ggmouse") ||
-                        output.contains("scrcpy") ||
-                        output.contains("flydigi") ||
-                        output.contains("gamesir") ||
-                        output.contains("mantis") ||
-                        output.contains("panda") ||
-                        output.contains("gamewolf")
-
-                if (hasInputDevice) return@withContext true
+                if (output.contains("external: true")) {
+                    logExternalReason("dumpsys:external_true")
+                    return@withContext true
+                }
+                if (output.contains("ggmouse")) {
+                    logExternalReason("dumpsys:ggmouse")
+                    return@withContext true
+                }
+                if (output.contains("scrcpy")) {
+                    logExternalReason("dumpsys:scrcpy")
+                    return@withContext true
+                }
+                if (output.contains("flydigi")) {
+                    logExternalReason("dumpsys:flydigi")
+                    return@withContext true
+                }
+                if (output.contains("gamesir")) {
+                    logExternalReason("dumpsys:gamesir")
+                    return@withContext true
+                }
+                if (output.contains("mantis")) {
+                    logExternalReason("dumpsys:mantis")
+                    return@withContext true
+                }
+                if (output.contains("panda")) {
+                    logExternalReason("dumpsys:panda")
+                    return@withContext true
+                }
+                if (output.contains("gamewolf")) {
+                    logExternalReason("dumpsys:gamewolf")
+                    return@withContext true
+                }
 
                 // Proceso scrcpy: pgrep -f matchea el cmdline completo (ps -A solo muestra
                 // el argv[0] = app_process, nunca "scrcpy" ni "server.jar"). El bracket
@@ -341,6 +379,7 @@ class SystemMonitor(private val context: Context) {
                     .runCommand("pgrep -f 'com.genymobile.scrcpy.Serve[r]'")
                     .getOrNull().orEmpty()
                 if (scrcpyPids.lines().any { it.trim().matches(Regex("\\d+")) }) {
+                    logExternalReason("pgrep:scrcpy")
                     return@withContext true
                 }
 
@@ -348,15 +387,14 @@ class SystemMonitor(private val context: Context) {
                 val psCheck = ShizukuExecutor.runCommand("ps -A")
                 val psOutput = psCheck.getOrNull()?.lowercase() ?: ""
 
-                val hasProcess = psOutput.contains("gg.mouse") ||
-                        psOutput.contains("ztezscreenshot") ||
-                        psOutput.contains("vphone") ||
-                        psOutput.contains("flydigi") ||
-                        psOutput.contains("gamesir") ||
-                        psOutput.contains("mantis") ||
-                        psOutput.contains("panda") ||
-                        psOutput.contains("gamewolf")
-                if (hasProcess) return@withContext true
+                val psMatched = listOf(
+                    "gg.mouse", "ztezscreenshot", "vphone",
+                    "flydigi", "gamesir", "mantis", "panda", "gamewolf"
+                ).firstOrNull { psOutput.contains(it) }
+                if (psMatched != null) {
+                    logExternalReason("ps:$psMatched")
+                    return@withContext true
+                }
 
                 // Check de servicios de accesibilidad
                 val enabledServices = Settings.Secure.getString(
@@ -364,11 +402,19 @@ class SystemMonitor(private val context: Context) {
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
                 )?.lowercase() ?: ""
 
-                enabledServices.contains("gg.mouse") ||
-                        enabledServices.contains("flydigi") ||
-                        enabledServices.contains("mantis") ||
-                        enabledServices.contains("panda")
-            } catch (_: Exception) {
+                val a11yMatched = listOf("gg.mouse", "flydigi", "mantis", "panda")
+                    .firstOrNull { enabledServices.contains(it) }
+                if (a11yMatched != null) {
+                    logExternalReason("a11y:$a11yMatched")
+                    return@withContext true
+                }
+
+                logExternalReason("none")
+                false
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "checkExternalDevices error: ${e.message}")
                 false
             }
         }
