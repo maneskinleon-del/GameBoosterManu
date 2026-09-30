@@ -76,7 +76,7 @@ class GameDetector(private val context: Context) : DefaultLifecycleObserver {
         "com.android.deskclock", "com.android.calendar",
         "com.android.phone", "com.android.contacts",
         "com.google.android.apps.messaging",
-        "com.zjx.ztezscreenshot",   // overlay de captura del ZTE (transitoria)
+        "com.zjx.ztezscreenshot",   // mapper ZTE GG Mouse (corre en background, no es juego ni screenshot)
         "cn.nubia.gameassist"       // game assist del OEM (transitoria)
     )
 

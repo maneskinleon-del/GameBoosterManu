@@ -314,6 +314,15 @@ class SystemMonitor(private val context: Context) {
                 val result = ShizukuExecutor.runCommand(command)
                 val output = result.getOrNull()?.lowercase() ?: ""
 
+
+                /**
+                 * Trade-off: el grep de dumpsys input incluye external: true para HIDs
+                 * virtuales (scrcpy uhid, GG Mouse). En su defecto, ps -A detecta
+                 * mappers que no reportan como HIDs (ztezscreenshot, vphone, etc.).
+                 * La doble capa evita falsos negativos: si un mapper no aparece en
+                 * dumpsys (scrcpy sin --mouse=uhid), pgrep -f lo cubre; si no hay
+                 * proceso en ps -A, el primer grep lo cubre.
+                 */
                 val hasInputDevice = output.contains("external: true") ||
                         output.contains("ggmouse") ||
                         output.contains("scrcpy") ||
@@ -340,6 +349,7 @@ class SystemMonitor(private val context: Context) {
                 val psOutput = psCheck.getOrNull()?.lowercase() ?: ""
 
                 val hasProcess = psOutput.contains("gg.mouse") ||
+                        psOutput.contains("ztezscreenshot") ||
                         psOutput.contains("vphone") ||
                         psOutput.contains("flydigi") ||
                         psOutput.contains("gamesir") ||
