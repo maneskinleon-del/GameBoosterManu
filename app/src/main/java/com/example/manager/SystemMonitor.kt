@@ -310,7 +310,7 @@ class SystemMonitor(private val context: Context) {
     private suspend fun checkExternalDevices(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val command = "dumpsys input | grep -i -E 'keyboard|mouse|ggmouse|external|scrcpy' | head -n 50"
+                val command = "dumpsys input | grep -i -E 'scrcpy|external: true|ggmouse|flydigi|gamesir|mantis|panda|gamewolf'"
                 val result = ShizukuExecutor.runCommand(command)
                 val output = result.getOrNull()?.lowercase() ?: ""
 
@@ -325,9 +325,17 @@ class SystemMonitor(private val context: Context) {
 
                 if (hasInputDevice) return@withContext true
 
-                // Detección por procesos activos
-                // Nota: scrcpy no se chequea en ps -A porque corre en el host PC.
-                // Se detecta via hasInputDevice (dumpsys input incluye el descriptor HID).
+                // Proceso scrcpy: pgrep -f matchea el cmdline completo (ps -A solo muestra
+                // el argv[0] = app_process, nunca "scrcpy" ni "server.jar"). El bracket
+                // en "Serve[r]" evita self-match del sh -c que ejecuta el comando.
+                val scrcpyPids = ShizukuExecutor
+                    .runCommand("pgrep -f 'com.genymobile.scrcpy.Serve[r]'")
+                    .getOrNull().orEmpty()
+                if (scrcpyPids.lines().any { it.trim().matches(Regex("\\d+")) }) {
+                    return@withContext true
+                }
+
+                // Detección por procesos activos (mappers que sí aparecen en ps -A)
                 val psCheck = ShizukuExecutor.runCommand("ps -A")
                 val psOutput = psCheck.getOrNull()?.lowercase() ?: ""
 
@@ -337,10 +345,7 @@ class SystemMonitor(private val context: Context) {
                         psOutput.contains("gamesir") ||
                         psOutput.contains("mantis") ||
                         psOutput.contains("panda") ||
-                        psOutput.contains("gamewolf") ||
-                        psOutput.contains("hud") ||
-                        (psOutput.contains("app_process") && psOutput.contains("server.jar"))
-
+                        psOutput.contains("gamewolf")
                 if (hasProcess) return@withContext true
 
                 // Check de servicios de accesibilidad
