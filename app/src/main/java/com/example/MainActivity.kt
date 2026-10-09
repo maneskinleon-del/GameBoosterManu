@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.example.data.PreferenceManager
 import kotlin.math.roundToInt
 import com.example.data.database.ProfileEntity
+import com.example.manager.AccessibilityOptionalRules
 import com.example.manager.boostsession.BoostSessionState
 import com.example.manager.boostsession.RestoreResult
 import com.example.data.repository.FsmState
@@ -262,6 +263,10 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
     
     val health by viewModel.healthStatus.collectAsStateWithLifecycle()
     val depState by viewModel.dependencyState.collectAsStateWithLifecycle()
+    // "Modo sin accesibilidad": lectura directa en composición — NUNCA envolver en remember.
+    // Frescura garantizada por la recreación de tab (AnimatedContent) + poll de depState (15s).
+    val isAccessibilityOptional = PreferenceManager.isAccessibilityOptional(context)
+    val a11yActive = depState.accessibility.state == com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE
     
     var dpiIndex by remember { mutableIntStateOf(4) }
     val currentPointerSpeed by viewModel.pointerSpeed.collectAsStateWithLifecycle()
@@ -377,14 +382,6 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
 
-        // Onboarding dialog state
-        var showOnboarding by remember {
-            mutableStateOf(
-                !UnifiedAccessibilityService.isServiceRunning &&
-                !PreferenceManager.isAccessibilityOnboardingShown(context)
-            )
-        }
-
         // --- TARJETAS DE ESTADO SHIZUKU Y ACCESIBILIDAD ---
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             StatusCard(
@@ -410,7 +407,8 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
             StatusCard(
                 modifier = Modifier.weight(1f),
                 title = "ACCESIBILIDAD",
-                isActive = depState.accessibility.state == com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE,
+                isActive = a11yActive,
+                stateLabel = if (isAccessibilityOptional && !a11yActive) "Opcional" else null,
                 icon = Icons.Rounded.AccessibilityNew,
                 onClick = {
                     try {
@@ -421,7 +419,11 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
         }
 
         // Accessibility status banner
-        if (depState.accessibility.state != com.example.data.repository.DependencyState.Accessibility.AccessibilityState.ACTIVE) {
+        if (AccessibilityOptionalRules.shouldShowAccessibilityBanner(
+                isActive = a11yActive,
+                isOptional = isAccessibilityOptional
+            )
+        ) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 colors = CardDefaults.cardColors(containerColor = WarningOrange.copy(alpha = 0.15f)),
@@ -441,7 +443,12 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
         }
 
         // Onboarding dialog
-        if (!UnifiedAccessibilityService.isServiceRunning && !PreferenceManager.isAccessibilityOnboardingShown(context)) {
+        if (AccessibilityOptionalRules.shouldShowAccessibilityOnboarding(
+                isServiceRunning = UnifiedAccessibilityService.isServiceRunning,
+                onboardingShown = PreferenceManager.isAccessibilityOnboardingShown(context),
+                isOptional = isAccessibilityOptional
+            )
+        ) {
             AccessibilityOnboardingDialog(
                 onDismiss = {
                     PreferenceManager.setAccessibilityOnboardingShown(context, true)
@@ -667,7 +674,7 @@ fun DependencyRow(
 }
 
 @Composable
-fun StatusCard(modifier: Modifier, title: String, isActive: Boolean, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+fun StatusCard(modifier: Modifier, title: String, isActive: Boolean, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit, stateLabel: String? = null) {
     Card(
         modifier = modifier.clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)),
@@ -687,7 +694,18 @@ fun StatusCard(modifier: Modifier, title: String, isActive: Boolean, icon: andro
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(title, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.6f))
-            Text(if (isActive) "Activo" else "Inactivo", fontWeight = FontWeight.ExtraBold, color = if (isActive) MaterialTheme.colorScheme.secondary else WarningOrange, fontSize = 12.sp)
+            Text(
+                stateLabel ?: if (isActive) "Activo" else "Inactivo",
+                fontWeight = FontWeight.ExtraBold,
+                color = when {
+                    stateLabel != null -> Color.White.copy(alpha = 0.4f) // estado declarado (modo opcional), no falla
+                    isActive -> MaterialTheme.colorScheme.secondary
+                    else -> WarningOrange
+                },
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -736,6 +754,7 @@ fun SectionCard(
 
 @Composable
 fun BoostScreen(viewModel: GameBoostViewModel) {
+    val context = LocalContext.current
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val availableGovernors by viewModel.availableGovernors.collectAsStateWithLifecycle()
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -802,6 +821,11 @@ fun BoostScreen(viewModel: GameBoostViewModel) {
             val isAutoDetect by viewModel.isAutoDetectGamesEnabled.collectAsStateWithLifecycle()
             val isDeepSleep by viewModel.isDeepSleepEnabled.collectAsStateWithLifecycle()
             val isMsaa by viewModel.isMsaaEnabled.collectAsStateWithLifecycle()
+            // "Modo sin accesibilidad" (opción C): estado local del switch, se persiste en
+            // PreferenceManager; el Dashboard relee el valor al volver de tab.
+            var isAccessibilityOptional by remember {
+                mutableStateOf(PreferenceManager.isAccessibilityOptional(context))
+            }
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -815,6 +839,18 @@ fun BoostScreen(viewModel: GameBoostViewModel) {
                     AdvancedToggle("Auto-Detección de Juegos", "Activa perfiles automáticamente", isAutoDetect) { viewModel.toggleAutoDetectGames() }
                     AdvancedToggle("Optimización en Suspensión", "Ahorra recursos cuando la pantalla está apagada", isDeepSleep) { viewModel.toggleDeepSleep() }
                     AdvancedToggle("MSAA 4x", "Mejora calidad gráfica (GPU-intensive, puede bajar FPS en gama media)", isMsaa) { viewModel.toggleMsaa() }
+                    // Modo sin accesibilidad: solo silencia avisos de UI; NO apaga
+                    // UnifiedAccessibilityService (si está activa, sigue como fast-path).
+                    // Nota: DiagnosticScreen sigue mostrando "INACTIVO" para accesibilidad:
+                    // es información de estado (no nudge) y queda fuera del alcance de este modo.
+                    AdvancedToggle(
+                        "Modo sin accesibilidad",
+                        "Detección por polling (hasta 30s en background)",
+                        isAccessibilityOptional
+                    ) {
+                        isAccessibilityOptional = it
+                        PreferenceManager.setAccessibilityOptional(context, it)
+                    }
                 }
             }
         }

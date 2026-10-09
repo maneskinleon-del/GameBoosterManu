@@ -21,6 +21,7 @@ object PreferenceManager {
     private const val KEY_DEEP_SLEEP_OPTIMIZATIONS = "deep_sleep_optimizations"
     private const val KEY_FORCE_SCRCPY_MODE = "force_scrcpy_mode"
     private const val KEY_ACCESSIBILITY_ONBOARDING_SHOWN = "accessibility_onboarding_shown"
+    private const val KEY_ACCESSIBILITY_OPTIONAL = "accessibility_optional"
 
   /** Devuelve `true` si existe la clave custom_dpi guardada */
   fun isDpiForced(context: Context): Boolean =
@@ -65,6 +66,21 @@ object PreferenceManager {
     
     fun setAccessibilityOnboardingShown(context: Context, shown: Boolean) {
         getPreferences(context).edit().putBoolean(KEY_ACCESSIBILITY_ONBOARDING_SHOWN, shown).apply()
+    }
+
+    /**
+     * "Modo sin accesibilidad": silencia el banner y el onboarding de accesibilidad
+     * cuando la a11y no está activa. No apaga UnifiedAccessibilityService (sigue como
+     * fast-path si está encendida).
+     * Independiente de [isAccessibilityOnboardingShown] ("ya lo vi"): son dos flags
+     * distintos y ambos se mantienen.
+     */
+    fun isAccessibilityOptional(context: Context): Boolean {
+        return getPreferences(context).getBoolean(KEY_ACCESSIBILITY_OPTIONAL, false)
+    }
+
+    fun setAccessibilityOptional(context: Context, optional: Boolean) {
+        getPreferences(context).edit().putBoolean(KEY_ACCESSIBILITY_OPTIONAL, optional).apply()
     }
     
     fun setServiceRunning(context: Context, running: Boolean) {
