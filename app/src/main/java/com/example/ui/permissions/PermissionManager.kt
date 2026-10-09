@@ -77,10 +77,15 @@ class PermissionManager(private val activity: ComponentActivity) {
      *  4. battery optimization exemption (solo M+)
      */
     fun checkAndRequest(onlySilentCheck: Boolean = false) {
+        val shizukuPing = Shizuku.pingBinder()
+        // requiereBinder solo si el server está vivo; sin ping lanza
+        // IllegalStateException("binder haven't been received") y crashea la Activity.
+        val shizukuGranted = shizukuPing &&
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         val snapshot = PermissionSnapshot(
             hasOverlay = Settings.canDrawOverlays(activity),
-            shizukuPing = Shizuku.pingBinder(),
-            shizukuGranted = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED,
+            shizukuPing = shizukuPing,
+            shizukuGranted = shizukuGranted,
             hasPostNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
             else true,
