@@ -452,6 +452,10 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
             AccessibilityOnboardingDialog(
                 onDismiss = {
                     PreferenceManager.setAccessibilityOnboardingShown(context, true)
+                },
+                onDismissWithoutAccessibility = {
+                    PreferenceManager.setAccessibilityOptional(context, true)
+                    PreferenceManager.setAccessibilityOnboardingShown(context, true)
                 }
             )
         }
@@ -1736,7 +1740,10 @@ fun HealthBadge(label: String, isAlive: Boolean) {
 }
 
 @Composable
-fun AccessibilityOnboardingDialog(onDismiss: () -> Unit) {
+fun AccessibilityOnboardingDialog(
+    onDismiss: () -> Unit,
+    onDismissWithoutAccessibility: () -> Unit
+) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f),
@@ -1777,6 +1784,13 @@ fun AccessibilityOnboardingDialog(onDismiss: () -> Unit) {
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("Entendido", fontWeight = FontWeight.Bold, color = Color.Black)
+                    }
+                    TextButton(
+                        onClick = onDismissWithoutAccessibility,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Continuar sin accesibilidad", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
