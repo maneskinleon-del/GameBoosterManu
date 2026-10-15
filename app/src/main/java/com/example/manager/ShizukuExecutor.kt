@@ -23,7 +23,14 @@ import java.util.concurrent.TimeUnit
  * - Rish / Runtime como fallback; PRIVILEGE_UNAVAILABLE solo si ningún backend pudo lanzar
  * - exit≠0 con backend vivo → CommandFailedException (no enmascarar como privilegio)
  *
- * TODO: migrar a UserService cuando Shizuku elimine newProcess.
+ * TODO: migrar a UserService SOLO si Shizuku deprecia newProcess.
+ * Auditoría 2026-10-14 (comparativa con GG Mouse Pro 3):
+ * GG Mouse usa UserService como 1 de 4 canales de activación
+ * (su/UserService/newProcess/ADB), no como IPC principal. Su daemon
+ * persistente + sockets + uid shell sirve a la inyección nativa de
+ * input, que GBM no hace. El executor actual (timeouts + read-back +
+ * fallbacks) ya es más robusto que el lado de comandos de GG Mouse.
+ * No migrar sin necesidad concreta.
  */
 object ShizukuExecutor {
     private const val TAG = "ShizukuExecutor"
