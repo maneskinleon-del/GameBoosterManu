@@ -37,13 +37,13 @@
 
 ## 📲 Descargar APK
 
-**[⬇️ Descargar GameBoost Pro — checkpoint `ece1e89`](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/checkpoint-ece1e89/GameBoostPro-debug-ece1e89.apk)**
+**[⬇️ Descargar GameBoost Pro — checkpoint `835e373`](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/checkpoint-835e373/GameBoostPro-debug-835e373.apk)**
 
 | | |
 |--|--|
-| **Commit** | `ece1e89cd7620069cd23d7cfc9ebdd697e2cd076` (main) |
-| **SHA-256** | `900ab69adfc62138ee486baf458ba8d3253160e00f2993f963e4cae68dda7359` |
-| **Incluye** | R1 (autoridad de ciclo de vida del boost) + Tabs reorganizadas + hot-reload Shizuku (`62f0d69`) + gate stale (`1143d3c`) + fix logcat-c (`a261e0d`) + ping RTT real (`ece1e89`) |
+| **Commit** | `835e3734fc500a3daa5c5566d1c4d8d2a11f03c1` (main) |
+| **SHA-256** | `cf4a84d61c3f544c61ac92054db8079494e499f3f194388b7c501854c364938f` |
+| **Incluye** | Mapper fix (`dumpsys:scrcpy` → `ext=true` → ff_mouse) + Modo sin accesibilidad persistente + Shizuku sin crash en cold start + overlay sync + thread safety + dead code removal (`ShizukuServiceConnection`) |
 
 > ⚠️ Al instalar, permite "Fuentes desconocidas" en la configuración de Android.
 
