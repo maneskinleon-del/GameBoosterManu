@@ -23,6 +23,18 @@ android {
     }
 
     buildTypes {
+        debug {
+            // FASE A (plan-audit 2026-10-15): shrink SIN ofuscar sobre debug
+            // (el APK publicado es debug; release no tiene signingConfig —
+            //  decisión 1 del operador). Release recibe lo mismo cuando haya
+            //  signingConfig de release.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
