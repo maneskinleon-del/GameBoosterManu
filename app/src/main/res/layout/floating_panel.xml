@@ -43,25 +43,6 @@
 
             <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
 
-            <!-- Temp -->
-            <LinearLayout
-                android:id="@+id/llStatTemp"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:padding="1dp">
-                <TextView
-                    android:id="@+id/tvStatTemp"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🌡️ --"
-                    android:textSize="9sp"
-                    android:textColor="#FFFFFF" />
-            </LinearLayout>
-
-            <View android:layout_width="1dp" android:layout_height="14dp" android:background="#33FFFFFF" android:layout_marginHorizontal="3dp"/>
-
             <!-- Battery -->
             <LinearLayout
                 android:id="@+id/llStatBattery"

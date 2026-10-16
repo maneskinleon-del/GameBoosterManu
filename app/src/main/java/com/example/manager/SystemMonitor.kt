@@ -17,6 +17,19 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
+ * Parsea una lectura cruda de los archivos `temp` de /sys/class/thermal
+ * (directorio `thermal_zone` + índice) a Celsius.
+ * Devuelve `null` para no-numérico, vacío o valores implausibles (≤0 o >150°C):
+ * evita que un 0 falso dispare la restauración de perfil de la rama `<= 40°C`
+ * del Watchdog. Función pura (sin I/O sysfs) para que sea testeable en JVM puro.
+ */
+internal fun parseThermal(raw: String): Float? {
+    val temp = raw.trim().toFloatOrNull() ?: return null
+    val celsius = if (temp > 1000) temp / 1000 else temp
+    return if (celsius <= 0f || celsius > 150f) null else celsius
+}
+
+/**
  * Monitoreo de métricas del sistema en tiempo real.
  * 
  * Recolecta CPU, RAM, batería, ping, pointer speed, DPI, etc.
@@ -200,8 +213,7 @@ class SystemMonitor(private val context: Context) {
         )
         for (file in thermalFiles) {
             try {
-                val temp = File(file).readText().trim().toFloat()
-                return if (temp > 1000) temp / 1000 else temp
+                parseThermal(File(file).readText())?.let { return it }
             } catch (_: Exception) {}
         }
         return Float.NaN

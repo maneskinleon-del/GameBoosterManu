@@ -174,7 +174,6 @@ class FloatingPanelManager(private val appContext: Context) {
         if (!isVisible || floatingView == null || !isExpanded) return
         
         floatingView?.post {
-            floatingView?.findViewById<TextView>(R.id.tvStatTemp)?.text = "🌡️ ${metrics.cpuTemp.toInt()}°C"
             floatingView?.findViewById<TextView>(R.id.tvStatBattery)?.text = "⚡ ${metrics.batteryLevel}%"
             floatingView?.findViewById<TextView>(R.id.tvStatRam)?.text = "🧠 ${(metrics.ramUsed / 1024.0).format(1)}GB"
             floatingView?.findViewById<TextView>(R.id.tvStatPing)?.text = "🌐 ${metrics.ping}ms"

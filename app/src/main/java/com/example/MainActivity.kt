@@ -360,7 +360,7 @@ fun DashboardScreen(viewModel: GameBoostViewModel) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Rounded.Thermostat, contentDescription = null, tint = WarningOrange, modifier = Modifier.size(20.dp))
-                    Text("${stats.cpuTemp.toInt()}°C", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("${if (stats.cpuTemp.isNaN()) "N/D" else "${stats.cpuTemp.toInt()}°C"}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Rounded.BatteryChargingFull, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
