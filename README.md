@@ -109,16 +109,16 @@ adb shell pm grant com.manuel.gameboostpro moe.shizuku.manager.permission.API_V2
 > ⚠️ El servidor Shizuku **muere al reiniciar el teléfono** — hay que
 > re-ejecutar `/data/local/tmp/shizuku` tras cada reinicio.
 
-## 📲 Descargar APK (release vigente)
+## 📲 Descargar APK (release estable)
 
-**[⬇️ GameBoosterManu-thermal-session.apk — prerelease `thermal-m8-session`](https://github.com/maneskinleon-del/GameBoosterManu/releases/tag/thermal-m8-session)**
+**[⬇️ GameBoostPro-debug-b190221.apk — release estable `checkpoint-b190221`](https://github.com/maneskinleon-del/GameBoosterManu/releases/tag/checkpoint-b190221)**
 
 | | |
 |--|--|
-| **Rama base** | `thermal-m8-test` (HEAD `066e369`) |
-| **Asset** | `GameBoosterManu-thermal-session.apk` |
-| **SHA-256** | `3dd7899fd42d7fc99ef7db322c02d57ffc6ca34f7b266f5b491a357733f16d65` |
-| **Incluye** | Telemetría `ThermalSession` (debug), `ThermalGovernor` + tests, `buildConfig=true` |
+| **Branch/commit** | `main` HEAD `b190221` |
+| **Asset** | `GameBoostPro-debug-b190221.apk` |
+| **SHA-256 (verificado: descargado == compilado)** | `ec34c42bd7ada4f254816bd82af153e6f60c3af37d1d92bbde404f8f4df1c73e` |
+| **Incluye** | Telemetría `ThermalSession` (debug), `ThermalGovernor` + 7 tests, watchdog térmico **apagado por defecto**, verificación UI→executor→sistema documentada en [PERFILES.md §6](docs/PERFILES.md) |
 
 ## 📊 Telemetría de sesión (debug)
 
