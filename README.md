@@ -55,13 +55,22 @@ Cada afirmación de esta lista tiene su contrapartida en la matriz medida
 La app incluye el toggle **"Watchdog Térmico"** (pantalla avanzada):
 monitorea la temperatura y previene el sobrecalentamiento.
 
-- **Estado por defecto (código vigente): ACTIVADO**
-  (`PreferenceManager.kt:129` → `getBoolean(..., true)`).
-- La governor class que lo respalda (`ThermalGovernor`) está medida con
-  7 tests JVM ( ThermalGovernorTest, suite en verde ).
-- Nota del operador: si el default deseado es "apagado", hay que cambiar
-  el `true` de initial value en código (discrepancia documentada en
-  [PERFILES.md §5](docs/PERFILES.md)).
+- **Estado por defecto (código vigente): DESACTIVADO**
+  (`GameBoostRepository.kt:190` → `SettingToggle(..., false)` y
+  `PreferenceManager.kt` → `getBoolean(..., false)`). El default anterior
+  era ACTIVADO y se cambió a apagado hasta que la FASE B recalibre el
+  governor: un pico instantáneo NO debe mandar a power save a usuarios
+  nuevos.
+- Si lo activas manualmente y la temperatura dispara un nivel, el
+  Watchdog puede llevar la app a POWER SAVE incluso por un pico
+  sensorial puntual. Para apagarlo: pantalla avanzada →
+  "Watchdog Térmico" off. El governor de señal (`ThermalGovernor`)
+  espera mediana-5 + dwell 30 s + histéresis 60 s para evitarlo
+  (ThermalGovernorTest, 7 tests en verde), pero no está cableado al
+  efecto hasta FASE B.
+- ¿Cuándo activar el watchdog?: si tu juego se cierra por
+  sobrecalentamiento (LMK térmico) Y notas el teléfono caliente.
+  Recomendado: apagado durante sesiones de calibración y pruebas.
 
 ## 📱 Requisitos
 
@@ -115,7 +124,7 @@ adb shell pm grant com.manuel.gameboostpro moe.shizuku.manager.permission.API_V2
 
 `SystemMonitor` emite una línea CSV por tick (~2 s) con el tag
 `ThermalSession` **solo cuando `BuildConfig.DEBUG=true`** (el bloque se
- elimina en release por R8, flag de compilación):
+elimina en release por R8, flag de compilación):
 
 ```
 ts_ms,batteryLevel,batteryTemp,cpuMax,perfil,cpu-0-0=val,cpu-1-3=val,...
@@ -163,19 +172,27 @@ com.example/
 
 ## 🔒 Limitaciones conocidas
 
+> **Alcance de la medición:** toda la matriz de perfiles y candidatos de
+> [docs/PERFILES.md](docs/PERFILES.md) fue medida en un **ZTE Z2352N**
+> (uid 2000). En otros equipos el resultado puede diferir — por ejemplo
+> el Poco M8 sí reporta cpuMax (el ZTE devuelve `NaN`). Los candidatos
+> `touch_sampling_rate` y `scaling_governor` deben repetirse en el M8
+> cuando esté conectado por adb.
+
 - **Governor CPU inaccesible sin root en kernels ZTE** (medido:
   `Permission denied` en cpu0-7 + policy0/4/7) — el cambio de perfil
   solo altera refresh/animaciones/pointer/perf-mode en esos equipos.
-- **Mode performance fijo sin confirmación observable** en `dumpsys
+- **Modo performance fijo sin confirmación observable** en `dumpsys
   power` del firmware ZTE (exit=0 pero sin estado expuesto).
 - **Lectura `thermal_zone` a veces falla sin permisos** — en el ZTE el
   cpuMax reporta `NaN` (esperable, latch térmico del OEM); el
   ThermalGovernor trata NaN como señal inválida y no actúa.
 - Android 13+ hace batching de AlarmManager (~7 min en Doze) para el
   watchdog del servicio.
-- **`renice`/`taskset` solo sobre procesos del propio uid** — medido
-  (C2 de [PERFILES.md §4](docs/PERFILES.md)); procesos de otros uid
-  requieren root.
+- **`renice`/`taskset` solo verificados sobre procesos del propio uid**
+  (C2 de [PERFILES.md §4](docs/PERFILES.md)); su efecto sobre procesos
+  de otras apps (el juego) está **no verificado** — probablemente
+  requiera root, pero no se ha medido.
 
 ## 🔑 Shizuku clásico: symptoms del fork y fix
 
