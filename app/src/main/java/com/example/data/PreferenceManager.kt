@@ -126,7 +126,9 @@ object PreferenceManager {
     }
 
     fun isThermalWatchdogEnabled(context: Context): Boolean {
-        return getPreferences(context).getBoolean(KEY_THERMAL_WATCHDOG, true)
+        // Default APAGADO (consistencia con SettingToggle del repository; decisión
+        // operador 2026-10-17, pendiente recalibrado de Fase B).
+        return getPreferences(context).getBoolean(KEY_THERMAL_WATCHDOG, false)
     }
 
     fun setThermalWatchdogEnabled(context: Context, enabled: Boolean) {

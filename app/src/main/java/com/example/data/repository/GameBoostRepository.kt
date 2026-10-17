@@ -187,7 +187,9 @@ class GameBoostRepository private constructor(private val context: Context) {
     val aggressiveOptimization = SettingToggle(context, "aggressive_optimization", false)
     val autoDetectGames = SettingToggle(context, "auto_detect_games", true)
     val forceScrcpyMode = SettingToggle(context, "force_scrcpy_mode", false)
-    val thermalWatchdog = SettingToggle(context, "thermal_watchdog", true)
+    // Default APAGADO hasta que Fase B recalibre el governor: un pico instantáneo
+    // no debe mandar a power save a usuarios nuevos (decisión operador 2026-10-17).
+    val thermalWatchdog = SettingToggle(context, "thermal_watchdog", false)
     val deepSleep = SettingToggle(context, "deep_sleep_optimizations", true)
     val msaa = SettingToggle(context, "msaa_enabled", false)
 
