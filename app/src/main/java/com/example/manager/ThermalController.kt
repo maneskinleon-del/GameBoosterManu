@@ -158,22 +158,28 @@ class ThermalController(private val context: Context) {
     }
 
     /**
-     * Lee la temperatura actual del CPU.
-     * @return temperatura en °C, 0 si no se puede leer
+     * Temperatura CPU actual en °C — DELEGA en el lector térmico ÚNICO
+     * ([THERMAL_TICK_CACHE] + [maxCpuZoneTemp], definidos en SystemMonitor.kt,
+     * mismo package): enumera zonas por `type` (prefijos cpu-/cpuss-) UNA vez
+     * por proceso y en ticks posteriores SOLO relee `temp` de las zonas ya
+     * identificadas; latch de tick 1 si nada fue legible, y latch de pérdida
+     * solo tras 5 fallos CONSECUTIVOS de lectura — ver KDoc de [CpuThermalTickCache])
+     * y devuelve el máximo de CPU válidas, `Float.NaN` si no hay ninguna.
+     *
+     * Antes devolvía 0f cuando nada era legible — invertir el error en 0f es
+     * exactamente el contrato que provocó el bug "🌡 0°C". NaN es el valor
+     * no disponible del proyecto (parser validado) y así lo consume cualquier
+     * presentador correcto (dashboard y overlay ya mapean NaN → N/D).
+     *
+     * Decisión de conservar la API: grep de llamadores en app/src (2026-10-16)
+     * = 0 usos de getCurrentTemp() fuera de su DEFINICIÓN (GameBoostRepository
+     * sólo usa setup()/onCriticalHeat/onSevereHeat/thermalStatus). Sin usos
+     * sería eliminable, pero es un método público y la delegación no rompe
+     * elementos — el cambio mínimo dado el alcance de la tarea (validación
+     * en POCO M8 5G) sin riesgo de API.
      */
     fun getCurrentTemp(): Float {
-        val thermalFiles = listOf(
-            "/sys/class/thermal/thermal_zone0/temp",
-            "/sys/class/thermal/thermal_zone1/temp",
-            "/sys/devices/virtual/thermal/thermal_zone0/temp"
-        )
-        for (file in thermalFiles) {
-            try {
-                val temp = java.io.File(file).readText().trim().toFloat()
-                return if (temp > 1000) temp / 1000 else temp
-            } catch (_: Exception) {}
-        }
-        return 0f
+        return maxCpuZoneTemp(THERMAL_TICK_CACHE.samples())
     }
 
     fun shutdown() {

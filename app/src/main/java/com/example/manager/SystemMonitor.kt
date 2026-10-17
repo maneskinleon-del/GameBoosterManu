@@ -29,6 +29,173 @@ internal fun parseThermal(raw: String): Float? {
     return if (celsius <= 0f || celsius > 150f) null else celsius
 }
 
+/** Ruta única de zonas térmicas — SystemMonitor y ThermalController la comparten. */
+internal val SYSFS_THERMAL_DIR: File = File("/sys/class/thermal")
+
+/**
+ * ¿El `type` de una thermal_zone es atribuible razonablemente a CPU?
+ *
+ * Criterio conservador por prefijo: `cpu*` (cubre `cpu-0-0`, `cpu0`,
+ * `cpuss-*`, etc.). NO atribuye a CPU: `aoss-*` (director del SoC),
+ * `gpuss-*` (GPU), batería, cargador ni desconocidos — presentar el máximo
+ * de cualquier subsistema como "CPU" sería la atribución engañosa que
+ * Device Watch hace (sus zonas no se copian).
+ *
+ * Se decide por el `type`, NUNCA por el índice de la zona (thermal_zone0 no
+ * implica CPU: en SoCs reales es a menudo el sensor del PCB/paquete completo).
+ *
+ * NOTA por-chip: el prefijo `cpu*` cubre los `type` de QUALCOMM. En MEDIATEK el
+ * tipo de las zonas CPU suele ser `mtktscpu-*` (no calza el prefijo) — ahí el
+ * lector reporta Float.NaN → "N/D": fallo conservador, nunca dato falso.
+ */
+internal fun isCpuThermalType(type: String): Boolean {
+    return type.trim().lowercase().startsWith("cpu")
+}
+
+/**
+ * Selección térmica CPU: descarta zonas no-CPU y lecturas inválidas
+ * (validación REUTILIZADA de [parseThermal], no duplicada) y devuelve el
+ * MÁXIMO de las lecturas CPU válidas, en Celsius.
+ *
+ * `Float.NaN` cuando no hay ninguna zona CPU con lectura válida — nunca
+ * 0 (el Watchdog trataría 0 como temperatura real; NaN es el dato
+ * no-disponible del proyecto). Pura: la I/O vive en [readCpuZoneSamples].
+ */
+internal fun maxCpuZoneTemp(samples: List<Pair<String, String>>): Float {
+    var max = Float.NaN
+    for ((type, raw) in samples) {
+        if (!isCpuThermalType(type)) continue
+        val celsius = parseThermal(raw) ?: continue
+        if (max.isNaN() || celsius > max) max = celsius
+    }
+    return max
+}
+
+/**
+ * Enumeración I/O del árbol `thermal_zoneN`: lee `type` y `temp` de cada zona,
+ * tolerando permisos denegados, archivos ausentes, contenido vacío y
+ * errores de lectura (cada fallo descarta SOLO esa zona, sin propagar
+ * excepción ni inventar 0). Devuelve pares (type, temp cruda), sin parsear.
+ *
+ * @param dir inyectable para tests JVM (producción: [SYSFS_THERMAL_DIR]).
+ */
+internal fun readCpuZoneSamples(dir: File): List<Pair<String, String>> =
+    enumerateThermalZones(dir).map { it.type to it.temp }
+
+/** Muestra (type, temp) de una zona térmica con la ruta de su `temp`, para releer
+ *  temperatura en ticks posteriores sin re-enumerar (ahorro de I/O: en el ZTE
+ *  unas 70 zonas fallaban por tick a causa de SELinux). */
+internal data class ThermalZoneSample(val zone: File, val type: String, val temp: String)
+
+/**
+ * Enumeración I/O del árbol `thermal_zoneN`: lee `type` y `temp` de cada zona,
+ * tolerando permisos denegados, archivos ausentes, contenido vacío y
+ * errores de lectura (cada fallo descarta SOLO esa zona, sin propagar
+ * excepción ni inventar 0). Devuelve la lista CRUDA de muestras, sin parsear.
+ *
+ * @param dir inyectable para tests JVM (producción: [SYSFS_THERMAL_DIR]).
+ */
+internal fun enumerateThermalZones(dir: File): List<ThermalZoneSample> {
+    val zones = dir.listFiles()
+        ?.filter { it.isDirectory && it.name.startsWith("thermal_zone") }
+        ?: return emptyList()
+    val samples = mutableListOf<ThermalZoneSample>()
+    for (zone in zones) {
+        val type = try { File(zone, "type").readText().trim() } catch (_: Exception) { continue }
+        if (type.isEmpty()) continue
+        val temp = try { File(zone, "temp").readText().trim() } catch (_: Exception) { continue }
+        samples.add(ThermalZoneSample(zone, type, temp))
+    }
+    return samples
+}
+
+/**
+ * Cache del lector térmico por instancia: las zonas se enumeran UNA vez (la
+ * primera llamada a [samples]); los ticks posteriores NO re-enumeran — releen
+ * SOLO el `temp` de las zonas CPU cacheadas (el `type` no cambia en caliente
+ * en el kernel). Ahorro: en un SoC con ~70 zonas, la enumeración es ~140
+ * aperturas sysfs por tick, y donde SELinux deniega todo (p.ej. ZTE) son
+ * ~70 fallos por ciclo para nada.
+ *
+ * Dos latches, con semántica distinta:
+ *
+ * - **Tick 1 (nunca hubo nada legible):** si la enumeración inicial no
+ *   produce NI UNA zona CPU válida (SELinux deniega el árbol desde el arranque,
+ *   etc.) se abandona para siempre: el uid de la app no gana permiso de sysfs
+ *   a mitad de sesión (mismo patrón que el latch de Device Watch).
+ *
+ * - **Pérdida posterior (había zonas CPU legibles y dejan de leerse):** exige
+ *   [LATCH_AFTER_CONSECUTIVE_FAILURES] (= 5) ticks consecutivos sin NINGUNA
+ *   lectura CPU válida antes de latchar. Un fallo PUNTUAL (deep suspend que
+ *   congela sysfs un instante, un tick que devuelve vacío/0) NO mata el
+ *   monitor térmico de un servicio de larga vida: al tick siguiente vuelve a
+ *   leer y el contador de fallos se resetea. Solo si el árbol permanece
+ *   ilegible tick tras tick (permiso revocado, hardware apagado) es razonable
+ *   dejar de pagar el costo de reintento.
+ *
+ * Los tests crean instancias frescas; solo producción comparte el singleton
+ * [THERMAL_TICK_CACHE].
+ *
+ * THREAD-SAFETY: el acceso a TODO el estado mutable ([cachedCpuZones],
+ * [abandoned], [consecutiveReadFailures]) ocurre exclusivamente dentro del
+ * bloque `synchronized(lock)` que envuelve todo [samples] — los consumidores
+ * (SystemMonitor loop en Dispatchers.IO y ThermalController.getCurrentTemp)
+ * comparten el singleton sin serialización adicional. No hay campos `@Volatile`:
+ * el lock es el garante, no la visibilidad volátil.
+ */
+internal class CpuThermalTickCache(private val dir: File) {
+    private val lock = Any()
+    private var cachedCpuZones: List<ThermalZoneSample>? = null
+    private var abandoned = false
+    private var consecutiveReadFailures = 0
+
+    private companion object {
+        /** Fallos consecutivos de LECTURA (post-enumeración) antes del latch. */
+        const val LATCH_AFTER_CONSECUTIVE_FAILURES = 5
+    }
+
+    /**
+     * Muestras crudas del tick: en la primera llamada devuelve TODAS las zonas
+     * legibles (el selector [maxCpuZoneTemp] filtra por type, contrato previo
+     * de [readCpuZoneSamples]); en las siguientes, solo las CPU cacheadas.
+     * NEVER inventa 0: lista vacía cuando nada es legible.
+     */
+    fun samples(): List<Pair<String, String>> = synchronized(lock) {
+        if (abandoned) return emptyList()
+        val cached = cachedCpuZones
+        if (cached == null) {
+            val full = enumerateThermalZones(dir)
+            val cpu = full.filter { isCpuThermalType(it.type) && parseThermal(it.temp) != null }
+            cachedCpuZones = cpu
+            if (cpu.isEmpty()) abandoned = true // nada CPU legible: ni el tick 2 reintenta
+            full.map { it.type to it.temp }
+        } else {
+            val samples = cached.mapNotNull { z ->
+                val temp = try { File(z.zone, "temp").readText().trim() } catch (_: Exception) { null }
+                if (temp.isNullOrEmpty()) null else z.type to temp
+            }
+            if (maxCpuZoneTemp(samples).isNaN()) {
+                // Pérdida de lectura: latch solo tras N fallos CONSECUTIVOS —
+                // un fallo puntual no mata el monitor del servicio.
+                consecutiveReadFailures++
+                if (consecutiveReadFailures >= LATCH_AFTER_CONSECUTIVE_FAILURES) {
+                    abandoned = true
+                }
+                emptyList()
+            } else {
+                consecutiveReadFailures = 0
+                samples
+            }
+        }
+    }
+}
+
+/**
+ * Cache compartido SystemMonitor + ThermalController sobre la ruta real del
+ * sistema ([SYSFS_THERMAL_DIR]) — una sola enumeración viva por proceso.
+ */
+internal val THERMAL_TICK_CACHE = CpuThermalTickCache(SYSFS_THERMAL_DIR)
+
 /**
  * Monitoreo de métricas del sistema en tiempo real.
  * 
@@ -57,7 +224,13 @@ class SystemMonitor(private val context: Context) {
     private val _systemMetrics = MutableStateFlow(
         SystemMetrics(
             cpuUsage = 0, ramUsed = 0L, ramTotal = 0L,
-            batteryLevel = 0, batteryTemp = 0f, cpuTemp = 0f,
+            batteryLevel = 0, batteryTemp = 0f,
+            // NaN (no 0f): StateFlow inicial con 0f presentaba un valor inválido
+            // como válido durante los primeros ~2s (Watchdog rama <=40°C solo
+            // actúa si hubo episodio térmico previo, pero el overlay/dashboard
+            // habrían mostrado "0°C"). Este es el ÚNICO sitio del proyecto que
+            // construía SystemMetrics con temp falsa.
+            cpuTemp = Float.NaN,
             gpuUsage = 0, ping = 0, dpi = 0,
             pointerSpeed = "0%", animationScale = "1x", refreshRate = "60 Hz",
             governor = "Schedutil", touchSampling = "N/D",
@@ -204,20 +377,13 @@ class SystemMonitor(private val context: Context) {
         }
     }
 
-    /** F5: sin lectura real → NaN (no fingir 38°C). Watchdog no actúa sobre NaN. */
-    private fun getRealCpuTemp(): Float {
-        val thermalFiles = listOf(
-            "/sys/class/thermal/thermal_zone0/temp",
-            "/sys/class/thermal/thermal_zone1/temp",
-            "/sys/devices/virtual/thermal/thermal_zone0/temp"
-        )
-        for (file in thermalFiles) {
-            try {
-                parseThermal(File(file).readText())?.let { return it }
-            } catch (_: Exception) {}
-        }
-        return Float.NaN
-    }
+    /** F5: sin lectura real → NaN (no fingir 38°C). Watchdog no actúa sobre NaN.
+     *  Lector térmico ÚNICO: [THERMAL_TICK_CACHE] (tick 1: enumeración por
+     *  `type`; siguientes: solo `temp` de las zonas CPU cacheadas, con latch
+     *  si nada es legible). Ya no es un by-pass por índice (thermal_zone0 puede
+     *  no ser CPU — ver commit acdff69). */
+    private fun getRealCpuTemp(): Float =
+        maxCpuZoneTemp(THERMAL_TICK_CACHE.samples())
 
     private fun getRealCpuUsage(): Int {
         return try {
