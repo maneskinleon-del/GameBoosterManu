@@ -2,30 +2,66 @@
 
 # 🎮 GameBoost Pro
 
-**Optimización de rendimiento gaming para Android**
+**Optimización de rendimiento para Android con Shizuku**
 
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0-purple?logo=kotlin)](https://kotlinlang.org)
 [![Compose](https://img.shields.io/badge/Compose-Material3-blue)](https://developer.android.com/jetpack/compose)
 [![API](https://img.shields.io/badge/API-24%2B-green)](https://developer.android.com/about/versions/lollipop)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-*Perfiles de hardware, monitoreo en tiempo real, y optimización automática para Free Fire y otros juegos.*
-
 </div>
 
 ---
 
-## ✨ Características
+## ✨ Qué hace (trazable a la matriz de [docs/PERFILES.md](docs/PERFILES.md))
 
-- **5 perfiles de rendimiento:** EXTREME, FF MOUSE, GAMING, BALANCED, POWER SAVE
-- **Detección automática** de juegos en primer plano vía `GameDetector` (UsageStatsManager) + `UnifiedAccessibilityService` (suplementario para apps estándar; no genera eventos para juegos nativos como Free Fire que usan renderizado propio)
-- **Optimización por Shizuku/rish** — comandos privilegiados sin root
-- **Panel flotante** con métricas en tiempo real (CPU, RAM, FPS, temperatura)
-- **Watchdog anti-LMK** — el servicio se reinicia automáticamente si Android lo mata
-- **Control de:** governor CPU, refresh rate, DPI, velocidad del puntero, animaciones
-- **DNS automático** — Google DNS (dns.google) se aplica al cambiar de perfil
-- **WiFi optimizado** — baja latencia + prioridad WiFi sobre Bluetooth
-- **Indicador visual naranja** — perfil activo destacado con badge "ACTIVO"
+Cada afirmación de esta lista tiene su contrapartida en la matriz medida
+(§1-§4 de [PERFILES.md](docs/PERFILES.md)):
+
+- **6 perfiles de hardware**: EXTREME, FF MOUSE (ADS), GAMING, FREE FIRE
+  (touch), BALANCED, POWER SAVE con combinación distinta de
+  governor CPU + refresh rate + animaciones + modo performance fijo +
+  pointer_speed (solo ADS/EXTREME).
+- **Ejecución privilegiada vía Shizuku-ADB** (uid 2000) — sin root.
+- **Refresh rate por `settings put system peak/min_refresh_rate`** —
+  verificado CAMBIA en el ZTE (§2 del matriz).
+- **Animaciones por `settings put global *_animation_scale`** —
+  verificado CAMBIA (§2).
+- **Velocidad del puntero por funnel SSOT** (`settings put system
+  pointer_speed`, mapeo 0-100% → raw -7..7) — verificado CAMBIA (§2).
+- **Watchdog anti-LMK** — el servicio foreground se reanuda
+  automáticamente (`START_REDELIVER_INTENT`).
+- **Telemetría de sesión térmica en builds debug** (CSV `ThermalSession`
+  por tick ~2 s, ver §Telemetría abajo).
+- **Detección automática de juegos** — UsageStatsManager polling
+  (`GameDetector`); `UnifiedAccessibilityService` es suplementario y
+  **no capta juegos nativos** como Free Fire (su motor de render no
+  genera `TYPE_WINDOW_STATE_CHANGED`).
+
+## ❌ Qué NO hace la app (verificado, no prometido)
+
+| Ajuste | Estado | Por qué |
+|--------|--------|---------|
+| DPI por perfil | No se aplica al cambiar perfil | `applyProfile` no construye comando de densidad; solo ajuste manual del usuario |
+| Touch sampling 240 Hz | No disponible en ZTE | El kernel no expone `touch_sampling_rate` (§4) |
+| GPU governor | No implementado | Sin nodo/permiso usable por uid 2000 en el ZTE |
+| Governor CPU en ZTE | Comando existe, kernel lo deniega | `scaling_governor` es root-only en Z2352N: `Permission denied` medido en 11 nodos |
+| Modo performance fijo en ZTE | Comando aceptado (exit 0), sin estado observable en `dumpsys power` | No hay confirmación de que el firmware lo implemente |
+
+→ Detalle por comando con evidencia cruda: [docs/PERFILES.md §2](docs/PERFILES.md).
+
+## 👤 Watchdog térmico
+
+La app incluye el toggle **"Watchdog Térmico"** (pantalla avanzada):
+monitorea la temperatura y previene el sobrecalentamiento.
+
+- **Estado por defecto (código vigente): ACTIVADO**
+  (`PreferenceManager.kt:129` → `getBoolean(..., true)`).
+- La governor class que lo respalda (`ThermalGovernor`) está medida con
+  7 tests JVM ( ThermalGovernorTest, suite en verde ).
+- Nota del operador: si el default deseado es "apagado", hay que cambiar
+  el `true` de initial value en código (discrepancia documentada en
+  [PERFILES.md §5](docs/PERFILES.md)).
 
 ## 📱 Requisitos
 
@@ -34,43 +70,70 @@
 | Android | 7.0+ (API 24) |
 | Shizuku | Instalado y activo |
 
+### ⚠️ Usar el Shizuku CLÁSICO (RikkaApps), NO el fork Shizuku+
 
-## 📲 Descargar APK
+| | Shizuku clásico (RikkaApps) | Fork Shizuku+ |
+|---|---|---|
+| Permiso API | `moe.shizuku.manager.permission.API_V23` | `af.shizuku.plus.permission.API_V23` |
+| Compatibilidad | ✅ **Funciona** | ❌ **NO funciona** — la app pide el permiso clásico y el fork no lo concede |
+| Verificación | `logcat \| grep ShizukuExecutor` → `✅ Shizuku OK` | Usa `SUBridge` (mecanismo distinto) |
 
-**[⬇️ Descargar GameBoost Pro — checkpoint `835e373`](https://github.com/maneskinleon-del/GameBoosterManu/releases/download/checkpoint-835e373/GameBoostPro-debug-835e373.apk)**
+**Solución**: instalar el clásico desde
+[RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku/releases) y
+activar por ADB:
+
+```bash
+# Fix de batería (capas chinas: Xiaomi/HyperOS, ZTE, Vivo, Huawei)
+adb shell 'dumpsys deviceidle whitelist +moe.shizuku.privileged.api'
+adb shell 'cmd appops set moe.shizuku.privileged.api RUN_ANY_IN_BACKGROUND allow'
+adb shell 'am set-standby-bucket moe.shizuku.privileged.api active'
+
+# Activar servidor (método oficial 13.6.0+)
+APK_DIR=$(adb shell 'pm path moe.shizuku.privileged.api' | sed 's/package://; s|/base.apk||')
+adb shell "cp $APK_DIR/lib/arm64/libshizuku.so /data/local/tmp/shizuku && chmod 755 /data/local/tmp/shizuku"
+adb shell '/data/local/tmp/shizuku'
+
+# Conceder permiso a la app
+adb shell pm grant com.manuel.gameboostpro moe.shizuku.manager.permission.API_V23
+```
+
+> ⚠️ El servidor Shizuku **muere al reiniciar el teléfono** — hay que
+> re-ejecutar `/data/local/tmp/shizuku` tras cada reinicio.
+
+## 📲 Descargar APK (release vigente)
+
+**[⬇️ GameBoosterManu-thermal-session.apk — prerelease `thermal-m8-session`](https://github.com/maneskinleon-del/GameBoosterManu/releases/tag/thermal-m8-session)**
 
 | | |
 |--|--|
-| **Commit** | `835e3734fc500a3daa5c5566d1c4d8d2a11f03c1` (main) |
-| **SHA-256** | `cf4a84d61c3f544c61ac92054db8079494e499f3f194388b7c501854c364938f` |
-| **Incluye** | Mapper fix (`dumpsys:scrcpy` → `ext=true` → ff_mouse) + Modo sin accesibilidad persistente + Shizuku sin crash en cold start + overlay sync + thread safety + dead code removal (`ShizukuServiceConnection`) |
+| **Rama base** | `thermal-m8-test` (HEAD `066e369`) |
+| **Asset** | `GameBoosterManu-thermal-session.apk` |
+| **SHA-256** | `3dd7899fd42d7fc99ef7db322c02d57ffc6ca34f7b266f5b491a357733f16d65` |
+| **Incluye** | Telemetría `ThermalSession` (debug), `ThermalGovernor` + tests, `buildConfig=true` |
 
-> ⚠️ Al instalar, permite "Fuentes desconocidas" en la configuración de Android.
+## 📊 Telemetría de sesión (debug)
 
-## 🚀 Instalación
+`SystemMonitor` emite una línea CSV por tick (~2 s) con el tag
+`ThermalSession` **solo cuando `BuildConfig.DEBUG=true`** (el bloque se
+ elimina en release por R8, flag de compilación):
 
-### Opción 1: Compilar desde código fuente
+```
+ts_ms,batteryLevel,batteryTemp,cpuMax,perfil,cpu-0-0=val,cpu-1-3=val,...
+```
 
-1. Clona el repo:
+Captura de una sesión de juego:
+
 ```bash
-git clone git@github.com:maneskinleon-del/GameBoosterManu.git
-cd GameBoosterManu
+adb logcat -c
+# ... jugar la partida ...
+adb logcat -v time -s ThermalSession > ~/session.log
+python3 tools/summarize_session.py ~/session.log
 ```
 
-2. Abre en Android Studio
-
-3. Build & Run
-
-4. En `app/build.gradle.kts`, elimina:
-```kotlin
-signingConfig = signingConfigs.getByName("debugConfig")
-```
-
-5. Build & Run
-
-### Opción 2: AI Studio
-
-[Ver en AI Studio](https://ai.studio/apps/0f4c4b23-5708-4c64-be11-2a547261544e)
+`tools/summarize_session.py` calcula min/p50/median/p95/max por columna,
+saltos >10 °C por zona cpu-* y los que sobreviven a un filtro mediana-5
+(verificado sobre `tools/fixture_session.log`: 3 saltos crudos, 0 tras
+el filtro, zona más volátil `cpu-0-0`).
 
 ## 🏗️ Arquitectura
 
@@ -81,129 +144,65 @@ com.example/
 │   ├── repository/     # GameBoostRepository (singleton facade)
 │   └── PreferenceManager.kt
 ├── manager/            # Lógica de sistema
-│   ├── ShizukuExecutor    # Comandos privilegiados
-│   ├── ProfileManager     # Perfiles de hardware
-│   ├── RamManager         # Limpieza de memoria
+│   ├── ShizukuExecutor    # Comandos privilegiados (uid 2000)
+│   ├── ProfileManager     # Perfiles de hardware (matriz §1)
 │   ├── ThermalController  # Control de temperatura
-│   ├── GameDetector       # Detección de juegos
+│   ├── ThermalGovernor    # Governors de señal térmica (puro, 7 tests)
+│   ├── SystemMonitor       # Métricas + telemetría ThermalSession
+│   ├── GameDetector       # Detección de juegos (UsageStats)
 │   └── ...
 ├── service/
-│   ├── GameBoostService        # Foreground service anti-LMK
+│   ├── GameBoostService     # Foreground service anti-LMK
 │   ├── UnifiedAccessibilityService
-│   ├── ServiceWatchdogReceiver # Watchdog AlarmManager
-│   └── BootReceiver            # Reinicio post-boot
+│   └── BootReceiver         # Reinicio post-boot
 ├── ui/
-│   ├── FloatingPanelManager   # Overlay flotante
-│   ├── theme/
-│   └── viewmodel/
+│   ├── FloatingPanelManager # Overlay flotante
+│   └── ...
 └── MainActivity.kt
 ```
 
-## 🎯 Perfiles
+## 🔒 Limitaciones conocidas
 
-| Perfil | Governor | Refresh | DPI | Uso |
-|--------|----------|---------|-----|-----|
-| 🔥 EXTREME | performance | 120Hz | 480 | Máximo rendimiento |
-| ⌨️ FF MOUSE | performance | 120Hz | 480 | Free Fire + mouse |
-| 🎮 GAMING | schedutil | 90Hz | 480 | Gaming general |
-| ⚖️ BALANCED | schedutil | 60Hz | 417 | Uso diario |
-| 🔋 POWER SAVE | powersave | 60Hz | 417 | Ahorro de batería |
+- **Governor CPU inaccesible sin root en kernels ZTE** (medido:
+  `Permission denied` en cpu0-7 + policy0/4/7) — el cambio de perfil
+  solo altera refresh/animaciones/pointer/perf-mode en esos equipos.
+- **Mode performance fijo sin confirmación observable** en `dumpsys
+  power` del firmware ZTE (exit=0 pero sin estado expuesto).
+- **Lectura `thermal_zone` a veces falla sin permisos** — en el ZTE el
+  cpuMax reporta `NaN` (esperable, latch térmico del OEM); el
+  ThermalGovernor trata NaN como señal inválida y no actúa.
+- Android 13+ hace batching de AlarmManager (~7 min en Doze) para el
+  watchdog del servicio.
+- **`renice`/`taskset` solo sobre procesos del propio uid** — medido
+  (C2 de [PERFILES.md §4](docs/PERFILES.md)); procesos de otros uid
+  requieren root.
 
-## 📊 Scripts de diagnóstico
+## 🔑 Shizuku clásico: symptoms del fork y fix
 
-```bash
-# Capturar logs durante una partida
-bash capturar_logs.sh
-
-# Medir FPS/RAM/CPU durante 60s
-bash medir_rendimiento.sh
-```
-
-## 🔧 Dependencias principales
-
-| Librería | Uso |
-|----------|-----|
-| Jetpack Compose | UI declarativa |
-| Room | Base de datos local |
-| Shizuku | Comandos privilegiados |
-| Lifecycle | StateFlow + ViewModel |
-| Coroutines | Operaciones async |
-| AccessibilityService | Detección foreground suplementaria (no funciona con juegos nativos) |
-
-## 📝 Documentación
-
-- [AGENTS.md](AGENTS.md) — Guía para AI agents
-- [MEMORIA.md](MEMORIA.md) — Sesión de estabilidad y fixes
-- [PERFILES.md](PERFILES.md) — Detalle de perfiles de hardware
-- [SISTEMA_DE_MONITOREO.md](SISTEMA_DE_MONITOREO.md) — Sistema de métricas
-- [bugs.md](bugs.md) — Bug tracker (28 bugs documentados)
-- [SESION-2026-08-04.md](SESION-2026-08-04.md) — Sesión DNS + UI improvements
-- [SESION-2026-08-24.md](SESION-2026-08-24.md) — Sesión perfil manual, reapply, exit fix, batería
-
-## ⚠️ Limitaciones conocidas
-
-- Escritura de `scaling_governor` bloqueada en algunos kernels (ZTE, Xiaomi) — **mitigado** con skip automático
-- Lectura de `thermal_zone` puede no funcionar sin permisos
-- `renice` y `taskset` requieren Shizuku activo
-- Android 13+ hace batching de AlarmManager (~7 min para Doze)
-- **AccessibilityService no detecta juegos nativos** (Free Fire, PUBG, etc.) — motor de renderizado propio no genera `TYPE_WINDOW_STATE_CHANGED`; la detección primaria es via `GameDetector` (UsageStatsManager polling). El monitoreo del botón ADS (Free Fire) requiere que el juego exponga la UI como View hierarchy estándar, lo cual no ocurre con motores nativos (OpenGL/Vulkan)
-
-## 🔑 Shizuku: situación y requisito crítico
-
-**GameBoost Pro necesita Shizuku activo** para ejecutar comandos privilegiados (governor, refresh rate, DPI, pointer speed) sin root.
-
-### ⚠️ Usar el Shizuku CLÁSICO (RikkaApps), NO el fork Shizuku+
-
-| | Shizuku clásico (RikkaApps) | Fork Shizuku+ |
-|---|---|---|
-| Permiso API | `moe.shizuku.manager.permission.API_V23` | `af.shizuku.plus.permission.API_V23` |
-| Compatibilidad | ✅ **Funciona con GameBoost Pro** | ❌ **NO funciona** — la app pide el permiso clásico y el fork no lo concede |
-| Servidor | `shizuku_server` | `shizuku_plus_server` |
-| Verificación | `logcat \| grep ShizukuExecutor` → `✅ Shizuku OK` | Usa `SUBridge` (mecanismo distinto) |
-
-**Síntoma del fork**: la app se abre pero los comandos privilegiados fallan silenciosamente (el logcat de `ShizukuExecutor` queda vacío). El fork usa `af.shizuku.plus.permission.API_V23` mientras que GameBoost Pro (y GG Mouse Pro 2) esperan `moe.shizuku.manager.permission.API_V23` → `granted=false`.
-
-**Solución**: desinstalar el fork e instalar el clásico desde [RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku/releases), luego activar por ADB:
-
-```bash
-# Fix de batería (capas chinas: Xiaomi/HyperOS, ZTE, Vivo, Huawei)
-adb shell 'dumpsys deviceidle whitelist +moe.shizuku.privileged.api'
-adb shell 'cmd appops set moe.shizuku.privileged.api RUN_ANY_IN_BACKGROUND allow'
-adb shell 'am set-standby-bucket moe.shizuku.privileged.api active'
-
-# Activar (método oficial 13.6.0+)
-APK_DIR=$(adb shell 'pm path moe.shizuku.privileged.api' | sed 's/package://; s|/base.apk||')
-adb shell "cp $APK_DIR/lib/arm64/libshizuku.so /data/local/tmp/shizuku && chmod 755 /data/local/tmp/shizuku"
-adb shell '/data/local/tmp/shizuku'
-
-# Conceder permiso a la app
-adb shell pm grant com.manuel.gameboostpro moe.shizuku.manager.permission.API_V23
-```
-
-> ⚠️ El servidor Shizuku **muere al reiniciar el teléfono** — hay que re-ejecutar `/data/local/tmp/shizuku` tras cada reinicio (o usar depuración inalámbrica).
+Ver sección de **Requisitos** ya arriba. Resumen técnico del fallo del
+fork: `af.shizuku.plus.permission.API_V23` no coincide con el permiso
+que la app declara (`moe.shizuku.manager.permission.API_V23`) →
+`granted=false` → los comandos privilegiados fallan silenciosamente y
+el logcat de `ShizukuExecutor` queda vacío.
 
 ## 🖱️ Keymapper recomendado: GG Mouse Pro 2
 
-Para jugar Free Fire con mouse/teclado desde PC (scrcpy), **GG Mouse Pro 2** es el keymapper que mejor funciona con este setup:
+Para jugar Free Fire con mouse/teclado desde PC con scrcpy, el keymapper
+evaluado que mejor funciona con este setup es **GG Mouse Pro 2**:
 
-- **Paquete**: `com.zjx.ztezscreenshot`
-- **Activación**: Shizuku (requiere el clásico, ver arriba)
-- **Compatibilidad Free Fire**: ✅ Excelente
-- **Riesgo de ban**: Muy bajo (no clona el APK del juego)
+- Paquete: `com.zjx.ztezscreenshot`
+- Activación: Shizuku clásico (ver Requisitos)
+- Riesgo de ban: bajo (no clona el APK del juego)
 
 ```bash
-# Permisos necesarios
 adb shell appops set com.zjx.ztezscreenshot SYSTEM_ALERT_WINDOW allow
 adb shell dumpsys deviceidle whitelist +com.zjx.ztezscreenshot
 adb shell pm grant com.zjx.ztezscreenshot moe.shizuku.manager.permission.API_V23
 ```
 
-> ⚠️ **No usar el fork Shizuku+ con GG Mouse Pro 2** — mismo problema que con GameBoost Pro: el fork no concede el permiso clásico y el keymapper no puede inyectar comandos.
-
-**Alternativas evaluadas** (no recomendadas para este caso):
-- **Mantis Gamepad Pro** — mapper de *gamepad* físico, NO de teclado/mouse. No sirve para este setup.
-- **Octopus** — clona el APK (virtual sandbox) → **alto riesgo de ban** en Free Fire. Evitar.
-- **Panda Mouse Pro** — compatible pero con más drift y problemas ocasionales con anti-cheat.
+**Alternativas evaluadas** (no recomendadas aquí): Mantis Gamepad Pro
+(mapper gamepad, no teclado/mouse), Octopus (clona APK → riesgo de ban
+alto), Panda Mouse Pro (compatible pero con drift).
 
 ## 📄 Licencia
 
@@ -214,7 +213,5 @@ MIT License
 <div align="center">
 
 **Desarrollado por Manu** 🇨🇱
-
-*Free Fire + Android + Optimización + IA*
 
 </div>
