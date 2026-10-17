@@ -52,6 +52,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         // Tests JVM puros: android.util.Log → no-op en vez de "not mocked".
