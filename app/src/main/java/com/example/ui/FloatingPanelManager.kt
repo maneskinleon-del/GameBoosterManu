@@ -174,6 +174,12 @@ class FloatingPanelManager(private val appContext: Context) {
         if (!isVisible || floatingView == null || !isExpanded) return
         
         floatingView?.post {
+            // Métrica de temp del overlay (restaurada junto al lector
+            // CpuThermalTickCache): N/D si NaN — JAMÁS "0°C" como sustituto
+            // de un error de lectura.
+            val tempC = metrics.cpuTemp
+            floatingView?.findViewById<TextView>(R.id.tvStatTemp)?.text =
+                if (tempC.isNaN()) "🌡️ N/D" else "🌡️ %.1f°C".format(tempC)
             floatingView?.findViewById<TextView>(R.id.tvStatBattery)?.text = "⚡ ${metrics.batteryLevel}%"
             floatingView?.findViewById<TextView>(R.id.tvStatRam)?.text = "🧠 ${(metrics.ramUsed / 1024.0).format(1)}GB"
             floatingView?.findViewById<TextView>(R.id.tvStatPing)?.text = "🌐 ${metrics.ping}ms"
